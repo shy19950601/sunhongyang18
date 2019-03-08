@@ -1,0 +1,147 @@
+在操作服务器前需要做三步：
+	1.查看系统版本：cat /etc/redhat-release
+	2.查看系统主机名：hostname
+	3.查看系统的网卡IP地址：ifconfig
+真机进行远程管理虚拟机：
+	命令格式：ssh -X root@对方的ip地址  -X选项是在远程管理时可以开启对方的图形程序
+	ssh工具可以远程连接其他主机，并且可以直接将连接其他主机所需操作，直接写在命令ssh命令行最后！
+软件包的管理：
+	1.获得软件包：
+		虚拟机classroom做了web网站，以此来共享软件包，classroom.example.com是访问地址
+	2.使用wget命令下载软件包到本地： -O 下载并将下载的文件改名
+		命令格式：wget + 软件包的url地址 （默认会下载到当前所在位置）
+			  wget + 软件包的url地址 -O + 路径/所要改的名称  （可以下载到指定的位置）
+	rpm命令可以实现简单软件包的安装：	
+		命令格式：rpm -ivh + 软件全称 （安装，并显示详细情况）
+			  rpm -q + 软件简称 （查看软件是否安装）
+			  rpm -e + 软件简称 （卸载软件）
+导入红帽签名：
+	命令：rpm --import RPM-GPG-KEY-redhat-release
+升级内核：
+	先下载内核包：wget + 内核包url
+	查看内核版本：unmae -r
+	安装内核包：rpm -ivh ker[tab]
+	然后重启系统：reboot
+解决软件包的依赖关系：当安装一个软件的时候，大多数软件都是需要先安装多个依赖包的，yum软件仓库用于解决依赖关系
+	书写yum软件仓库的配置文件：vim /etc/yum.repos.d/*.repo (自己新建一个以.repo结尾的文件)
+		输入：
+		[英文] //仓库标识
+		name=内容 			//写仓库的描述信息
+		baseurl=提供软件包的路径 	//指定下载路径
+		enabled=1或0 		//是否启用该文件 1是 0否		
+		gpgcheck=1或0		//是否检查红帽签名 1是 0否
+利用yum安装软件包：
+	命令：yum -y install + 软件简称
+利用yum卸载软件包：
+	命令：yum remove + 软件简称 （卸载也遵循依赖关系，一旦有被依赖的软件，也一起卸载）
+	清除yum缓存： yum clean all （如果不清除缓存，即使软件卸载了，也会自动读取缓存信息以为你装了）
+	列出yum仓库的信息：yum repolist
+永久修改主机名：
+	vim /etc/hostname （输入名称即可，需要重启终端才能生效）
+永久修改IP地址，子网掩码，网关地址：
+	nmcli connection modify '网卡名称' ipv4.method manual ipv4.addresses 'ip地址/子网掩码 网关地址' connection.autoconnect yes
+	查看网卡名称命令：nmcli connection show
+	激活网卡：nmcli connection up '网卡名称' 
+永久修改IPv6地址，子网掩码，网关地址：
+	nmcli connection modify '网卡名' ipv6.method manual ipv6.address 'ipv6地址/64 ipv6网关地址' connection.autoconnect yes 
+	nmcli connection up '网卡名称' 
+IPv6的地址表示：
+	是由128个二进制数组成的，以冒号隔开，每组数用十六进制表示，每段连续的0可以省略不写，简化为：：：
+永久指定DNS服务器的地址（网卡信息必须配置完才可以）：
+	vim /etc/resolv.conf
+	输入：nameserver DNS服务器的ip地址
+测试DNS解析：
+	nslookup 需要解析的域名
+重定向：将前面命令的输出，当作内容写入到文本文件中
+	>：覆盖重定向，将内容覆盖原内容的写入到文件里
+	>>：追加重定向，所写的内容会出现在文件内容的最后
+		例：ls --help > /opt/1.txt (重定向具有新建文本的功能)
+		   hostname >> /opt/1.txt
+直接输出想输出的内容，常与重定向连用，用于写出内容：
+	命令：echo 内容
+		例：echo abc > /etc/hostname //非交互的直接改用户名
+		   echo nameserver 172.25.254.254 > /etc/reslov.conf //直接指定DNS服务器地址
+Linux计算器功能：
+	命令：bc 
+	常见运算：+ - * / %（取余数运算）
+	 % 的例子：9%4 就是9除以4取余数，结果等于1
+查看日期时间：
+	date命令可以直接查看当前时间
+	显示年的命令：date +%Y
+	显示周：date +%w
+	显示月：date +%m
+	显示日：date +%d
+	显示年月日：date +F    
+	修改时间：date -s  例：date -s '年-月-日 时-分-秒'
+管道操作：将管道前面命令的输出结果，作为管道后面命令的参数
+	例：head -12 /etc/passwd | tail -5  //将用户文件的前12行结果交给tail处理，最后只显示前12的倒数5行
+	   echo 1+1 | bc   //计算1+1
+	   ls --help | less  //分屏阅读ls的帮助信息
+	   ifconfig | head -2 //查看当前网卡
+	   ifconfig | grep eth0 //查找eth0的信息
+历史命令：
+	history：可以查看输入过的历史命令
+	history -c：可以清空历史命令
+	!n:感叹号加数字，可以直接执行第几条历史命令
+	!str：执行最近一次以str开头的命令 
+	想要调整历史命令保留的数量：
+		vim /etc/profile
+		HistTsize=1000 #改这个数字即可
+统计文件空间大小：
+	du：统计Linux系统中文件的占用空间
+	du -sh：提供单位显示文件的占用空间
+	想要统计单独的一个文件大小：
+		du -sh /boot /etc/pki
+man命令：
+	man passwd：针对于命令的帮助信息！这里passwd是命令
+	man 5 passwd：针对于文件的帮助信息！这里passwd指的是文件
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+
+
+
+
+
+
+
+
+
+
+
+
+
+		
+
+
+	
+		            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

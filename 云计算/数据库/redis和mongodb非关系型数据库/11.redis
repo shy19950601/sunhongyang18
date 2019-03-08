@@ -1,0 +1,237 @@
+数据库类型介绍：
+	关系型数据库RDBMS：
+		我要往表里存储数据前，必须先要有表结构，将数据存储在硬盘中，数据之间可以做关联操作
+		关系型数据库软件：mysql mariadb oracle sqlserver DB2
+	非关系型数据库NoSQL:
+		不需要先有表和表结构，而且我每一条表记录，它们的字段数可以不相同，字段类型也可以不同，直接存就可以
+		非关系型数据库软件：redis mongodb memcached
+redis非关系型数据库
+	redis数据库介绍：
+		是一款高性能的分布式（数据可以存不同的服务器里）内存数据库
+		支持数据持久化，定期会将内存里的数据存到硬盘里
+		支持 list列表、hash、set集合、zset有序集合 数据字段类型
+		也支持主从同步
+		也有集群
+		它的中文网站：www.redis.cn
+	部署redis服务：redis服务的默认端口号是6379
+		把mysql服务停掉
+		把整个redis目录拷贝到50虚拟机上，里面有个redis-4.0.8.tar.gz 压缩包，在50里面解压
+		1.装包
+			它是源码包需要编译安装,需要提前安装gcc编译工具,没安装gcc就编译就费费了，只能删掉redis-4.0.8再重新解压一遍
+			tar -xf redis-4.0.8.tar.gz
+			cd redis-4.0.8
+			make （编译）
+			make install （安装）
+		2.初始化配置（修改配置文件）它会自动启动服务
+			配置服务运行参数
+				端口
+				主配置文件
+				数据库目录
+				pid文件
+				启动程序
+			它有一个脚本，只要我们运行这个脚本，它就会做配值服务运行参数的操作： redis-4.0.8/utils/install_server.sh
+			我们需要运行这个脚本即可，要输入这个脚本的绝对路径，然后会出以下交互信息：
+				Please select the redis port for this instance: [6379]  			#问你用不用6379这个默认端口号
+				Please select the redis config file name [/etc/redis/6379.conf] 		#问你主配置文件放这里行不行
+				Please select the redis log file name [/var/log/redis_6379.log] 		#跟你确认日志文件存放位置
+				Please select the data directory for this instance [/var/lib/redis/6379]	#跟你确认数据库存放目录，定期会把内存里的数据存到这里
+				Please select the redis executable path [/usr/local/bin/redis-server] 	#服务启动时调用的程序文件
+				Selected config:
+					Port           : 6379
+					Config file    : /etc/redis/6379.conf
+					Log file       : /var/log/redis_6379.log
+					Data dir       : /var/lib/redis/6379
+					Executable     : /usr/local/bin/redis-server  	#上面到这都是刚才设置的配置信息
+					Cli Executable : /usr/local/bin/redis-cli		#这是连接redis数据库要使用的命令工具在哪
+					Is this ok? Then press ENTER to go on or Ctrl-C to abort.	#是否确认使用以上信息，回车完活，它自己去配置并且启动服务
+		3.查看服务状态信息
+			netstat -nutlp | grep 6379
+			ps -C redis-server
+			不过此时我们没有定义过redis数据库用于接收访问请求的ip地址，所以它默认是127，也就是只允许自己访问自己
+		4.本机访问redis服务存取数据
+			在linux命令行中输入命令：
+			redis-cli   就连上了，想断开就是exit
+			在redis命令行里存取数据的命令：
+				set 随便起个名 要存的数据	#存数据
+				get 起的那个名  		#这是取数据
+		5.自己启动服务、停止服务：
+			/etc/init.d/redis_6379 start  	#启动服务的方式 6379是redis端口号
+			/etc/init.d/redis_6379 stop		#停服务，这是脚本停
+			redis-cli -a 你的密码 shutdown		#停服务，这是命令停，命令停用的不是上面的脚本，是redis的程序
+		6.设置服务连接密码：
+			你需要先把服务停掉再改配置文件
+			设置密码是在配置文件里修改的
+			vim /etc/redis/6379.conf
+			在下面这部分里，是管密码配置的
+				################################## SECURITY ###################################
+			requirepass foobared #去掉这一行的注释，foobared这个就是密码，我们把这个foobared删除改成你想要的密码即可
+			然后保存退出
+				启动服务/etc/init.d/redis_6379 start
+			再连接时的命令：
+				redis-cli -a 你的密码
+			或者：
+				redis-cli先无密码连进去，再输入auth 写你的密码，也可以
+
+			这个redis有点特别，在你设置了密码之后，再想停服务的话，要输入密码，建议用命令停，改停服务脚本怪麻烦的：
+				redis-cli -a 你的密码 shutdown	
+			如果你还想用脚本停服务的话，就要改脚本/etc/init.d/redis_6379，启动服务那部分的脚本永远不用改。
+				sed -n '43p' /etc/init.d/redis_6379 	#这是输出43行的内容，到时候改的就是这一行
+				  	$CLIEXEC -p $REDISPORT shutdown	#这是没改前的命令
+					$CLIEXEC -p $REDISPORT -h 192.168.4.51 -a 123456 shutdown 	#如果你设置了密码和redis主机地址的话，要把对应的信息加入进去 	
+				保存退出，就可以用这个脚本
+
+		7.在redis命令行里可以使用的命令：命令不区分大小写，且redis有自动补全的功能
+			存储：set 变量 值			#该存储方式是字符类型！但是也可以存数值
+			获取：get 变量			
+			切换库：select 数据库编号0-15    	#redis默认就创建了这16个库，你一进入redis，默认就是在0号库里 
+			输出所有变量：keys * 
+			输出指定变量：keys a？		#一个?是一个字母，这就是说给我输出a开头，俩字符组成的变量
+			测试变量是否存在：EXISTS 变量	#如果返回值是0，就是没有这个变量，1是有
+			查看生存时间：ttl 变量 		#默认不设置变量的有效期，它在内存中就是永久存在的，如果返回值是-1是永不过期，0是过期，你查一个变量时，显示的是有效时间秒
+			设置变量有效期：expire 变量 10	#单位是秒，设置完之后如果返回值是1说明，执行成功了
+			删除变量：del 变量			#可以一起删多个，多个变量用空格分隔
+			移动变量：move 变量 数据库编号0-15	#移动变量到指定库
+			删除所有变量：flush all
+			删除当前库的所有变量：flushdb 
+			保存所有变量：save			#立刻马上把变量存硬盘里，要不它5分钟之后自己存/var/lib/redsi/6379/dump.rdb
+			关闭redis服务：shutdown		#当你把服务停掉的时候，它也会把内存中的数据写进硬盘。等redis再启动时，它自动加载硬盘中的数据
+			查看类型：type 变量名 		#默认所有变量的类型都是char字符型，即使你set a 101执行这样的命令，你get a看到的也是字符
+
+————————————————————————————————以下是配置文件相关配置————————————————————————————————————
+		关于数据单位：
+		1k => 1000 bytes
+		1kb => 1024 bytes
+		1m => 1000000 bytes
+		1mb => 1024*1024 bytes
+		1g => 1000000000 bytes
+		1gb => 1024*1024*1024 bytes	
+	配置文件解析：vim /etc/redis/6379.conf #这是主配置文件
+	93行：		port 6379		//这里的端口号就是让redis用的，你写啥它用啥
+	70行：		bind 127.0.0.1	//服务使用的ip地址，如果不想让别人访问，就写自己的回环地址
+	102行：	tcp-backlog 511	//redis用的是tcp协议，一个客户端连接，是一个tcp连接，511就是redis允许最大连接数
+	114行：	timeout 0		//连接超时时间，0是不设置超时时间，如果我们设置了5s的话，就是用户连5秒没连上redis，就不让它连了
+	131行：	tcp-keepalive 300	//这是说你客户端tcp连接一次redis，可以使用redis 300秒
+	137行：	daemonize yes	//是否让redis以守护进程运行，守护进程就是一旦启动，就在内存里待命，否则就是启动先休眠，谁要连redis再启动
+	187行：	database 16		//我们定义多少，redis默认就有多少个库，编号从0开始
+	172行：	logfile /var/log/redis_6379.log	//确认日志文件的存放位置
+	533行：	maxclients 10000	//并发连接数
+	264行：	dir /var/lib/redis/6379 			//指定数据库目录存放位置
+
+	配置文件中提供了以下内存清除的配置策略
+	volatile-lru	//删除最近最少使用的变量策略，针对的是设置了有效期（ttl）的变量
+	allkeys-lru		//删除最近最少使用的变量策略，不管你变量是否设置了有效期
+	volatile-random	//随机删除设置了有效期里的变量
+	allkeys-random	//随机删除变量，不管你是否设置了有效期
+	volatile-ttl(minor TTL)	//删除有效期马上要到了的变量
+	noeviction		//不删除内存里的数据，只是再往里写就报错，默认你不配置就是这种策略
+
+	现在知道了内存清除策略，应用指定配置策略的方法：
+	开启591行的注释， maxmemory-policy 写你所需要的清除策略
+
+	设置redis使用的内存大小：
+	开启560行的注释，maxmemory 写数字 (它的单位是字节，没设置它随机分配内存)  
+
+
+	当你设置了“删除最近最少使用的变量或者删除快过期的变量策略”它怎么知道什么样的变量是最近最少使用的呢，或者快过期的？你需要设置一个模版给系统参考：
+	开启602行注释， maxmemory-samples 5  每5分钟删除少于5次访问的数据，少于5秒有效期的变量，大概是这么个意思
+————————————————————————以上是配置文件相关配置——————————————————————————————————————————————
+
+	其他主机访问redis服务的命令，访问本机也可以输入这样的命令：
+		redis-cli -h 192.168.4.51 -p 6379 -a 123456
+		#-h是指定所要连接的服务器地址，-p是指定redis服务端口号，-a后面写的是密码
+___________________________________________________________________________________________________________
+
+	部署lnmp+redis环境：
+		50这台服务器配置lnmp环境+51这台服务配置redis服务
+50主机部署lnmp环境：可以参考高级运维的知识	
+安装nginx软件包
+  			]# rpm -q httpd
+  			]# netstat  -utnlp  | grep :80
+  			]# systemctl  stop httpd
+  			]# systemctl  disable httpd
+			]# yum -y  install  pcre-devel  zlib-devel openssl-devel
+  			]# tar -zxvf nginx-1.12.2.tar.gz 
+  			]# cd nginx-1.12.2/
+  			]# ./configure  --prefix=/usr/local/nginx 
+  			]# make 
+  			]# make install
+  			]# ls /usr/local/nginx/
+			   conf  html  logs  sbin
+安装php-fmp软件包
+			]# yum -y  install  php-fpm-5.4.16-42.el7.x86_64.rpm 
+  			]# systemctl  start php-fpm
+  			]# systemctl  enable php-fpm
+
+  			]# netstat -utnlp  | grep  :9000
+                        tcp   0  0 127.0.0.1:9000  0.0.0.0:*   LISTEN  2206/php-fpm: maste	       
+运行nginx服务
+			]# vim /usr/local/nginx/conf/nginx.conf
+			65         location ~ \.php$ {
+ 			66             root           html;
+ 			67             fastcgi_pass   127.0.0.1:9000;
+ 			68             fastcgi_index  index.php;
+ 			69         #   fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;
+ 			70             include        fastcgi.conf;
+ 			71         }
+			:wq
+			]#  /usr/local/nginx/sbin/nginx  -t
+  			]#  /usr/local/nginx/sbin/nginx
+  			]# netstat  -utnlp  | grep  :80
+编写php脚本文件，用于客户端测试查看效果 
+			]#vim /usr/local/nginx/html/test.php
+			<?php
+				phpinfo();
+			?>
+			:wq
+在客户端254 打开浏览器 访问 50主机的网站服务
+			http://192.168.4.50/test.php
+
+在51服务器上搭建redis服务：
+	装包
+	初始化配置
+	修改配置文件指定端口 服务ip地址 连接密码
+	重启动服务
+	查看服务信息
+
+配置50服务器中的php模块，使其可以连接redis服务：
+	先把连接redis服务的脚本拷贝到nignx服务的网站根目录里面：
+		cp linkredis.php /usr/local/nginx/html	#这个脚本是程序员写的php脚本，在教学环境里的redis文件夹里
+		我们看一下这个php脚本所实现的功能，并做相应修改：
+		<?php
+		$redis = new redis();	
+		$redis->connect('192.168.4.51',6379);	#连接的redis服务器ip，及端口号
+		$redis->auth('123456');				#这一行是连接redis服务器所需要的密码，这一行没写，我们自己写
+		$redis->set("abc","666666");			#这是存一个变量abc，赋值666666
+		echo $redis->get("abc");				#这一行是取变量abc的值，并输出其结果
+		?>
+
+   	因为默认我们的nginx是无法连接redis数据库的，所以上面脚本的功能无法实现，需要为50服务器部署连接redis的模块：
+	安装提供redis模块的软件包
+	]# yum -y  install php  php-devel autoconf automake	#安装php环境，及相应的依赖包，在yum源里就有
+ 	]# yum -y  install php-devel-5.4.16-42.el7.x86_64.rpm 	#这个包也是依赖包，在系统的yum源里没有，需要cd redis/lnmp 这个教学环境提供的目录里去安装
+  
+	]# tar -zxvf php-redis-2.2.4.tar.gz 	#这个包是教学环境里提供的源码包，这里面有php所需要的连接redis的模快，我们需要把这个模块编译安装
+	]# cd phpredis-2.2.4/
+	]# phpize 			#这个命令用来生成php配置文件，这个命令就是php的软件包提供的
+	]# ls /usr/bin/php-config 	#这个位置就是存放php配置文件的默认位置
+	]# ./configure  --with-php-config=/usr/bin/php-config	#指定配置文件的位置，我装redis模块的时候，需要知道php的配置
+	]# make
+	]# make install
+
+	装完之后在/usr/lib64/php/modules下有个redis.so 就是我们需要的支持连接redis数据库的文件
+	但是现在php在运行的时候，是没有加载这个redis.so模块的，我们需要去修改php的主配置文件：
+		vim /etc/php.ini		#这个文件里 ; 是注释
+		改728行，将注释去掉，改成 	extension_dir = "/usr/lib64/php/modules/"	 	#指定redis模块的目录
+		改730行，将注释去掉，改成	extension = "redis.so"				#指定redis模块名
+	保存退出重启服务：systemctl restart php-fpm
+	
+	现在可以查看php支持的模块： php -m | grep -i redis
+	以上ok的话，就可以用真机来访问51服务器的 linkredis.php 这个网页看效果了！curl http://192.168.4.50/linkredis.php
+			
+————————————————————————————————————以上是lnmp+redis环境部署————————————————————————————————————
+
+
+
+
+
+

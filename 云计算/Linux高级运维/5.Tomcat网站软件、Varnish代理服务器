@@ -1,0 +1,311 @@
+！！！！！接下来研究java写的网页！！！！！
+
+公司目前工作形式：
+开发提交代码，只要发现文件有变化，就传给jenkins上 ，jenkins就会传给tomcat
+开发——》SVN，GIT（服务器）——》Jenkins（服务器）——》  ——》 tomcat
+
+java是一种跨平台的，面向对象的程序设计语言，java技术具有卓越的通用性/高效性/平台移植性和安全性
+
+现在网站主流是php和java 
+php和python可以搭配nginx，apche
+java可以搭配tomcat，jboss，websphere，weblogic  tomcat是免费的，其他都收费！
+
+java的网页扩展名叫 .jsp相当于那个 .php
+
+接下来，研究java和tomcat
+首先，安装java 扩展包名叫jdk   java是通用的开发语言，什么平台都能用，什么活都能干！不像php
+目前的家用电器全是嵌入式的，都可能用java，连面包机都用java，java分支特别多！所以不可能完全搞明白，太庞大，光下软件包都要好多版本
+JDK是整个Java的核心 包括java运行环境（解释器） java工具（如编译 排错 打包等） java基础类库（里面有很多已经写好的相当于函数，直接调用就可以了）    
+JRE是JDK阉割之后的核心，去除了编译 排错 调试器 工具 
+JDK可以去官网里装，教学环境里已经装好了，但是更多的企业用的是open JDK不用orcle的JDK
+
+先安装JDK
+[root@web1 ~]# yum -y install  java-1.8.0-openjdk        //安装JDK
+[root@web1 ~]# java -version                   //这个命令可以查看JAVA版本
+
+安装完JDK该装Tomcat了，注意去web1操作！！！
+tomcat安装包，在lnmp_soft里，有个apche-tomcat-8.0.30.tar.gz
+ tar -xf  apache-tomcat-8.0.30.tar.gz 
+ mv apache-tomcat-8.0.30  /usr/local/tomcat #将解压之后的目录放到指定路径下
+ /usr/local/tomcat是默认路径！就像nginx一样
+ 这个路径下有几个重要的目录：
+bin/     //主程序目录，里面有个statup.sh是启动服务脚本shutdown.sh关服务脚本
+lib/     //这就是类库！
+logs/    //日志目录  
+temp/    //临时目录，临时文件在这里
+work/    //自动编译目录jsp代码转换servlet  不用管
+conf/    //配置文件目录
+webapps/ //存放网站根目录ROOT的目录
+ 
+但是感觉好像没有安装tomcat的过程，因为整个tomcat就是用java写的，因为已经下载了java解释器了。就像shell！
+
+
+现在输入/usr/local/tomcat/bin/startup.sh启动tomcat服务   tomcat默认用的是8080端口
+ 
+ss -ntulp | grep java    会看到3个端口信息，其中有个8005，因为tomcat都是java写的，所以搜索java
+ tomcat启动时需要大量的随机密文,只有达到足够数量，才能令8005端口起来
+  密文就是从/dev/random里拿 但是这里好多重复的 另外还有个/dev/urandom，这个数量和效率比前者好，当8005无法启动时，就可以把前者删除，
+  然后ln -s /dev/urandom  /dev/random 这样tomcat还以为在找random
+  而这些密文来自于内存里的数据
+做完上述操作，再重启一遍usr/local/tomcat/bin/tomcat/shutdown.sh 先关一遍，再输入local/tomcat/bin/startup.sh
+
+/usr/local/tomcat/webapps/ROOT  网站根目录，在这个目录里放的是网页页面，页面扩展名叫jsp
+新建一个页面
+      vim /usr/local/tomcat/webapps/ROOT/test.jsp
+<html>
+<body>
+<center>   //居中的意思，是h5语言
+Now time is: <%=new java.util.Date()%>            //Now time is: 是常量每次页面显示不会变, <%=new java.util.Date()%> 
+是一条命令相当于shell里的date 显示服务器当前时间<%里面写java的命令%>，java代码严格区分大小写
+</center>
+</body>
+</html>
+
+然后客户端进行网页访问查看，192.168.2.100：8080/test.jsp 端口号要加，不然就访问80了
+
+第一个实验。基于域名的虚拟主机
+cat /usr/local/tomcat/conf/server.xml
+
+<Server>     //声明，我是一台服务器
+   <Service>        //对外提供服务
+     <Connector port=8080 />         //启用端口8080用于服务
+     <Connector port=8009 />         //启用端口8009用于服务
+     <Engine name="Catalina" defaultHost="localhost">
+<Host name="www.a.com" appBase=webapps/ROOT unpackWARS="true" autoDeploy="true">   //域名是www.a.com   网站的根是   如果客户访问IP或同域名，就谁写前面，先访问谁
+</Host>                 如果不写，是装/usr/local/tomcat下
+<Host name="www.b.com" appBase="b" unpackWARS="true" autoDeploy="true">
+</Host>
+
+写完之后，重启usr/local/tomcat/bin/tomcat/shutdown.sh 先关一遍，再输入local/tomcat/bin/startup.sh
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+测试完成之后，来做  ！！！！基于域名的虚拟主机！！！！
+修改tomcat主配置文件/usr/local/tomcat/conf/server.xml
+
+     <Server>                   #声明我是一台服务器
+     <Service>               #我是提供服务的
+     <Connector port=8080 />   #我的8080端口是提供服务的
+     <Connector port=8009 />   #我的8009端口也是提供服务的
+     <Engine name="Catalina" defaultHost="">          
+ #tomcat不遵循匹配即停止机制，如果客户输入ip访问网站，取决于defaultHost="域名"如果写www.a.com，默认就打开www.a.com域名的网页
+     <Host name="www.a.com" appBase="a" unpackWARS="true" autoDeploy="true">       
+ #每一个Host是一个网站！name=域名，appBase=我的网站根目录在哪，写a就是  /usr/local/tomcat/a 下，默认这个a是webapps，里面放的是网页unpackWARS="true"开启自动解压， 可以自动解压格式是.war的压缩包，autoDeploy="true"会自动部署java
+     </Host>
+     <Host name="www.b.com" appBase="b" unpackWARS="true" autoDeploy="true">
+     </Host>
+      ...
+     </service>
+     </server>  
+
+其中上述配置文件内容有两种书写风格
+<man>  #开始          或者        <man name=tom age=18 />      这两种写法都对！
+name=tom
+age=19
+....
+</man>  #结尾
+注意：改配置文件一定不要把host写在host里！且要复制不要手写，因为严格区分大小写！
+
+上述配置文件写完，该创建网页目录了！mkdir /usr/local/tomcat/{a,b}   但是a，b这俩目录不能直接就往里面放网页，里面必须得有个ROOT目录，在ROOT里存网页
+然后往目录下面写个网页，然后重启tomcat服务usr/local/tomcat/bin/tomcat/shutdown.sh 先关一遍，再输入local/tomcat/bin/startup.sh
+
+可以用客户端加个解析/etc/hosts，去访问域名看效果，端口号：8080 一定要写
+
+现在看一下关于网站根目录的问题：为什么都指定了网站根目录，为啥还要写ROOT！
+/usr/local/tomcat/conf/server.xml 配置文件中，有一个docBase参数！
+ 用docBase参数可以修改默认网站首页路径
+
+<Host name="www.a.com" appBase="a" unpackWARS="true" autoDeploy="true">
+</Host>
+<Host name="www.b.com" appBase="b" unpackWARS="true" autoDeploy="true">
+<Context path="" docBase="base"/>  # ROOT就变成了base，默认不写docBase="base"，就是ROOT，也可以里面直接写一个/ ，那样就变成了usr/local/tomcat/b的目录底下直接放网页了
+要想让a也变成这个效果，就把这行写到上面a那个Host里
+</Host>
+
+改完配置文件，在相应的目录里创建网页，然后重启服务/usr/local/tomcat/bin/startup.sh，客户端访问网页查看效果
+
+关于网页跳转！
+vim /usr/local/tomcat/conf/server.xml
+<Host name="www.a.com" appBase="a" unpackWARS="true" autoDeploy="true">
+<Context path="/test" docBase="/var/www/html"/>       #当客户访问www.a.com:8080/test 自动跳转到/var/www/html/下的网页
+</Host>
+<Host name="www.b.com" appBase="b" unpackWARS="true" autoDeploy="true">   
+</Host>
+
+写完之后，重启usr/local/tomcat/bin/tomcat/shutdown.sh 先关一遍，再输入local/tomcat/bin/startup.sh
+
+然后客户端访问www.a.com:8080/test 查看效果，其实连/test都没有，也没有关系！不过没有nginx那个跳转功能强大
+
+——————————————————————————————————————————————————————————————————————————————————
+
+配置Tomcat支持SSL加密网站
+
+nginx和apache  每个网站的端口都必须是一一对应的，否则无法访问
+而tomcat就比较特殊了，因为配置文件端口是独立写在host外面的！
+<server>
+<service>
+<connector port=8080 />
+<connector port=xxx />
+ <Engine name="Catalina" defaultHost="www.a.com">     #engine相当于容器，当客户以ip访问网站时，engine name="xx" 里存放的就是网站根目录/usr/local/tomcat/xx ， www.a.com是默认跳到这个域名下的网页
+<host...../>
+<host...../>
+<server/>
+<service/>
+所以tomcat做一遍加密，所有网站都加密
+
+在web1上操作就可以
+1）创建加密用的私钥和证书文件，直接输入以下命令，需要注意的是这个公私钥是一个文件
+keytool -genkeypair -alias tomcat -keyalg RSA -keystore /usr/local/tomcat/keystore                //提示输入密码为:123456
+//-genkeypair     生成密钥对
+//-alias xxxx     密钥别名后面写啥都行
+//-keyalg RSA     定义密钥算法为RSA算法
+//-keystore         定义密钥文件存储在:/usr/local/tomcat/keystore 这个文件不存在，会自己生成
+这些敲完，会问一堆问题，需要yes确认
+
+然后需要修改server.xml配置文件，创建支持加密连接的Connector 
+ vim /usr/local/tomcat/conf/server.xml
+… …
+<Connector port="8443" protocol="org.apache.coyote.http11.Http11NioProtocol"   #我的加密端口是8443  
+maxThreads="150" SSLEnabled="true" scheme="https" secure="true"      #SSLEnabled="true"我加密打开了，scheme="https"你再访问就得是https访问     参数之间必须要有空格。
+keystoreFile="/usr/local/tomcat/keystore" keystorePass="123456" clientAuth="false" sslProtocol="TLS" />   #keystoreFile这里写的是密钥文件路径，
+keystorePass="123456"打开密码是你写的                默认这段Connector被注释掉了，打开注释，添加密钥信息即可将这对<!-- -->注释去掉
+
+重启Tomcat服务器
+[root@web1 ~]# /usr/local/tomcat/bin/shutdown.sh
+[root@web1 ~]# /usr/local/tomcat/bin/startup.sh
+
+客户端设置host文件，并浏览测试页面进行测试(proxy充当客户端角色)
+[root@proxy ~]# vim /etc/hosts
+… …
+192.168.2.100      www.a.com  www.b.com
+[root@proxy ~]# firefox https://www.a.com:8443/
+[root@proxy ~]# firefox https://www.b.com:8443/
+[root@proxy ~]# firefox https://192.168.2.100:8443/
+
+______________________________________________________________________________________________________________________
+
+配置Tomcat日志/usr/local/tomcat/logs  
+有个catalina.2019-01-23.log  			这里写的就是网站的日志，每天会自动生成新的
+   localhost_access_log.2019-01-23.txt      这是访问日志，每天生成新的
+
+1)为每个虚拟主机设置不同的日志文件，不写<Valve ..../>那段话，默认是不会生成网站日志的
+[root@web1 ~]# vim /usr/local/tomcat/conf/server.xml
+.. ..
+<Host name="www.a.com" appBase="a" unpackWARS="true" autoDeploy="true">
+<Context path="/test" docBase="/var/www/html/" />
+#从默认localhost虚拟主机中把Valve这段复制过来，适当修改下即可，粘到哪个网站下，哪个网站就会生成日志
+<Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs" 是存哪
+               prefix=" www.a.com" suffix=".txt"    #prefix=" www.a.com"前缀文件名 suffix=".txt"是扩展名
+               pattern="%h %l %u %t &quot;%r&quot; %s %b" />
+</Host>
+<Host name="www.b.com" appBase="b" unpackWARS="true" autoDeploy="true">
+<Context path="" docBase="base" />
+<Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs"
+               prefix=" www.b.com" suffix=".txt"
+               pattern="%h %l %u %t &quot;%r&quot; %s %b" />  #写的是第一列第二列....对应的是啥，不重要
+</Host>
+.. ..
+2）重启Tomcat服务器
+[root@web1 ~]# /usr/local/tomcat/bin/shutdown.sh
+[root@web1 ~]# /usr/local/tomcat/bin/startup.sh
+3）查看服务器日志文件
+[root@web1 ~]# ls /usr/local/tomcat/logs/
+会每天生成
+www.a.com.2019-01-24.txt
+www.b.com.2019-01-24.txt
+___________________________________________________________________________________________________________
+
+tomcat不是标准端口号，实际客户可能不会输入端口号
+修改配置文件，将port改成80，客户就可以不打端口号，访问了
+或者前面加个nginx代理，客户访问nginx因为nginx是80端口，nginx转给其他tomcat子服务器，也不用输入端口号了
+
+扩展实验(配置Tomcat集群)
+
+1) 在192.168.4.5主机上配置Nginx调度器（具体安装步骤参考前面的章节）
+[root@proxy ~]# vim  /usr/local/nginx/conf/nginx.conf
+http{
+    upstream toms {
+        server 192.168.2.100:8080;
+        server 192.168.2.200:8080;
+    }
+    server  {
+        listen 80;
+        server_name localhost;
+        location / {
+            proxy_pass  http://toms;
+        }
+    }
+}  
+
+2) 在192.168.2.100和192.168.2.200主机上配置Tomcat调度器
+以下以Web1为例：
+[root@web1 ~]# yum -y install  java-1.8.0-openjdk                //安装JDK
+[root@web1 ~]# yum -y install java-1.8.0-openjdk-headless        //安装JDK
+[root@web1 ~]# tar -xzf  apache-tomcat-8.0.30.tar.gz
+[root@web1 ~]# mv apache-tomcat-8.0.30  /usr/local/tomcat
+3）启动服务
+[root@web1 ~]# /usr/local/tomcat/bin/startup.sh
+4) 客户端验证
+为了防止有数据缓存，可以使用真实主机的google-chrome访问代理服务器，输入Ctrl+F5刷新页面。
+
+————————————————————————————————————————————————————————————————————————————————————————————————————
+
+CDN：内容分发网络
+核心作用是有个网站，上面有很多数据，用户在全国，全国同时访问，集群再多也解决不了，因为你公司光纤是有限的！就要用CDN了
+用户访问的时候就访问的离的最近的服务器，软件就可以用Varnish，但是用户不知道你哪有服务器！利用的就是DNS分离解析view！
+也就是把自己网站的东西，放到其他地点的服务器里！就叫CDN！离用户最近的叫边缘节点CDN！拷贝是节点之间互相拷贝的！
+这个玩意自己做，成本太特么大了，每个地点的服务器还特么要维护，网上有其他大公司搞CDN，人家收流量钱。
+
+使用Varnish加速Web
+最后端有个web 前面有个代理服务器，这个代理服务器除了集群功能，还有个varnish功能，可以缓存了！
+代理会将子服务器的内容缓存下来！下次客户再访问代理，代理直接将缓存给用户。让代理全部缓存一遍，就ok了，不用考虑集群底下的服务器了
+
+先做web1或者web2的web服务可以是apache或者nginx或者tomcat
+然后启动服务！
+
+然后做varnish缓存服务器，在4.5做，需要源码安装，有依赖包
+yum -y install gcc readline-devel    //安装软件依赖包
+yum -y install ncurses-devel         //安装软件依赖包
+yum -y install pcre-devel            //安装软件依赖包
+yum -y install \
+python-docutils-0.11-0.2.20130715svn7687.el7.noarch.rpm         //安装软件依赖包，这个包，yum里没有，要去lnmp里去装
+useradd -s /sbin/nologin varnish                //创建账户
+然后安装varnish在lnmp里
+tar -xf varnish-5.2.1.tar.gz
+cd varnish-5.2.1
+./configure
+make && make install
+
+自己手动拷贝一个配置文件：
+在源码包目录下，有个etc/example.vcl    将其拷贝到/usr/local/etc/default.vcl  
+然后修改这个配置文件，告诉代理服务器，内容去哪找哪个服务器
+vim  /usr/local/etc/default.vcl
+backend default {               #default 是随便起的名字
+     .host = "192.168.2.100";   #指定子服务器的ip地址
+     .port = "80";              #提供服务的端口
+ }
+然后重启服务,要注意此时这个代理服务器的80端口不能被占用，可以ss -ntulp | grep :80 看看哪个服务在用这个80端口，然后killall掉
+充启varnish的命令：varnishd -f /usr/local/etc/default.vcl
+敲命令设置varnish缓存到哪：
+//varnishd –s malloc,128M        定义varnish使用内存作为缓存，空间为128M   (快，但是空间小)
+//varnishd –s file,/var/lib/varnish_storage.bin,1G 定义varnish使用文件作为缓存  （空间大，但是慢）
+                             
+varnish有两个日志查看的话，敲命令就可以
+varnishlog                     //varnish日志
+varnishncsa                    //访问日志
+
+然后客户端访问4.5， 4.5是没有页面的。所以是被varnish找的web1要的网页，并且这次会将这个网页缓存，以后客户访问的话，就只会给缓存，放心varnish是会自动更新的，只不过不是立刻就改了
+有一种方法可以自己改varnish的缓存
+输入varnishadm 进入varnish
+输入vab req.url~.*    清理所有缓存 ～是正则匹配 .*是正则表示的所有字符
+
+———————————————————————————————————————————————————————————————————————————————————————————————
+
+
+
+
+
+
+
+
+

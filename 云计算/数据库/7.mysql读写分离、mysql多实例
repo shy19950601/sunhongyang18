@@ -1,0 +1,218 @@
+一、mysql数据读写分离
+		为的就是负载均衡！但是还是会有单点故障，为了解决单点故障，还可以再做一台备用代理服务器做读写分离！
+	1.什么是mysql数据读写分离
+		客户端的 不更改数据的sql指令 交给从服务器52处理
+		客户端的 更改数据的sql指令 交给主服务器51处理
+		在 主51 从52 服务器之间有一台代理服务器56安装支持读写分离的软件，用来接收客户的访问数据库请求，
+		并且不用开数据库服务，只是判断sql指令类型，然后将不同类型的sql指令交给不同的服务器处理
+		
+		还有一种方法，是通过程序员编写脚本，判断用户输入的sql指令是哪种类型，该交给哪个服务器处理，判断完成再指定连接哪个数据库的命令，这种方法叫做人肉分离		
+				
+		这就是读写分离
+	2.mysql读写分离的作用
+	3.怎么配置mysql读写分离，用服务器的形式！
+		拓扑结构
+		3.1）配置mysql主从同步结构（一主51 一从52）
+			51和52配置主从分离
+		3.2）配置数据读写分离的代理服务器56
+			3.2.1）安装maxscale-2.1.2-1.rhel.7.x86_64.rpm 这个包不在yum源里 这个包也叫mysql中间件，除了这个软件还有（mysql-proxy mycat）也可实现同样功能
+				这个软件包为我们提供了管理命令，我们可以max按俩下tab查看全部相关命令
+			3.2.2）修改配置文件/etc/maxscale.cnf
+				为了防止改错配置文件而无法还原，建议先把这个配置文件拷贝一份，
+				mv /etc/maxscale.cnf /etc/maxscale.back
+				cp /etc/maxscale.back /maxscale.cnf
+				然后配置这个文件，打开行号 vim /etc/maxscale.cnf
+
+				我们先来配置 [maxscale] 这里面的内容，这个部分的含义是定义这个服务运行之后的线程个数
+				threads=auto #默认线程的个数是1，我们改成auto它就会根据cpu的核心数自己创建线程个数，比如我们的cpu是8核的，它就开8个线程
+				
+				再改 [server1] 这部分用来定义它所掌控的数据库服务器的ip地址和端口号的，我们这台代理服务器掌握几台数据库服务器，就要有几个[server] 					[server1]里面写主库信息
+				type=server
+				address=192.168.4.51  	#主库ip地址
+				port=3306			#主库数据库服务的端口号
+				portocol=MySQLBackend				
+				[server2]里面写从库信息
+				type=server
+				address=192.168.4.52	#从库ip地址
+				port=3306			#从库数据库服务的端口号
+				portocol=MySQLBackend	
+				
+				再改 [MySQL Monitor] 这部分内容定义的是57这台代理服务器，要监视的数据库是谁
+				[MySQL Monitor]
+				type=monitor		#这个是监视时所要调用的程序
+				module=mysqlmon		#这个也是监视时所要调用的程序
+				servers=server1,server2   #57监视的数据库服务器，我们上面定义了几个server就写几个！
+				user=...	 #这个写的是主从服务器的授权用户，57要用这个用户连51和52的数据库，所以建议51和52的数据库授权用户最好同名同密码，也叫监控用户		
+				password=... #这个写的是主从服务器的授权用户密码，57要用这个用户连51和52的数据库，所以建议51和52的数据库授权用户最好同名同密码
+				monitor_interval=10000
+				
+				再改 [Read-Only Service] 这部分是定义只能做查询操作的数据库服务器,如果不希望从库只能查询，那就把这段全注释即可,
+				想有几个只读从库服务器就写几个[Read-Only Service]部分
+				但是这个功能完全看不出来在读写分离的作用，所以还是注释了吧
+				#[Read-Only Service]
+				#type=service
+				#router=readconnroute
+				#servers=server2
+				#user=... #写的是从库服务器的授权用户名
+				#password=... #写的是从库服务器授权用户的密码
+				#router_options=slave
+				
+				再改 [Read-write Service] 这部分是定义代理服务器所掌控的数据库服务器 以它们来做读写分离
+				[Read-write Service]
+				type=service
+				router=readwritesplit
+				servers=server1,server2  #读写分离在server1，server2上进行
+				user=....	#这个叫做路由用户，也是51 52的另一个授权用户，不过，这个用户是为了登陆进51和52从而检查，客户端输入的授权账户和密码存在与否！
+				password=.... 
+				max_slave_connections=100%
+				
+				[MaxAdmin Service] 这部分叫，定义管理服务，先不用改
+				[MaxAdmin Service]
+				type=service
+				router=cli
+				
+				再改[Read-Only Listener] 这个是定义 52从库服务器做只读服务时使用的端口号 如果上面没有开启只读功能，这个部分就注释掉，开了就别改
+				这部分是对应上面那部分的，也看不出来在读写分离中的作用，所以也注释了
+				#[Read-Only Listener] 
+				#type=listener
+				#service=Read-Only Service
+				#protocol=MySQLClient
+				#port=4008
+				
+				再改[Read Write Listener] 这个是定义 51 52这两台主从服务器，做读写分离服务功能时所需要使用的端口号，这部分也不用管
+				type=listener
+				service=Read-Write Service #这个是服务名称，不用管
+				protocol=MySQLClient
+				port=4006
+				
+				再改[MaxAdimn Listener] #这部分是定义52 56管理读写分离服务时使用的端口号，我们给指定一个
+				[MaxAdimn Listener]
+				type=listener
+				service=MaxAdmin Service
+				protocol=maxscaled
+				socket=default
+				port=4016   #这里没写，别重复就行
+				
+				然后根据配置文件的定义，给主从服务器添加相应的授权用户
+				给用户授权可以都在主库51上操作，因为51 52不是主从同步吗
+					监控用户： 
+					mysql> grant replication slave,replication client on *.* to  ...@'%' identified by "....";            
+					//这个用户的权限是可以查看主从服务是否正常，可以查看数据库服务是否是启动的，
+					路由用户：
+					mysql> grant select on mysql.* to ....@"%" identified by "....."; 
+					//这个用户只要有访问mysql所有表的权限即可
+				然后可以去52上查看这俩授权用户是否创建成功了：
+					select user,host from mysql.user where user in ("....","....");
+				然后50服务器可以测试授权：
+					[root@localhost mysql50]# mysql -h 172.25.4.51 -u ... -p123456
+			3.2.3）启动服务
+					以上操作全部做完了才可以启动读写分离服务，有特殊的命令：
+						maxscale -f  /etc/maxscale.cnf    啥提示没有就成功了
+			3.2.4）查看服务信息
+					ps -C  maxscale        //查看进程
+					netstat  -antup | grep maxscale      //查看端口
+					killall -9 maxscale //这个命令可以停这个服务
+			3.2.5）在56代理服务器本机 访问管理服务查看监控信息，看是否监视上了
+					maxadmin -P4016 -uadmin   -pmariadb
+					#这个是查看我们配置里写得监视端口号 帐号和密码别空格，就用这个账户名和密码！
+					list servers 可以查看监视信息，显示如下即正确
+					-------------------+-----------------+-------+-------------+--------------------
+					Server             | Address         | Port  | Connections | Status              
+					-------------------+-----------------+-------+-------------+--------------------
+					server1            | 192.168.4.10    |  3306 |           0 | Master, Running
+					server2            | 192.168.4.20    |  3306 |           0 | Slave, Running
+					-------------------+-----------------+-------+-------------+--------------------
+					退出可以输入exit
+			3.2.6）在51主库上创建用于客户端访问的授权用户：
+					grant select,insert db8.* jim@"%" indentified by '123456';
+					#根据自己的需求给权限！50客户端就可以用这个用户做测试了
+
+		3.3）客户端50 测试读写分离配置：
+			 mysql -h172.25.4.56  -P4006 -ujim -p123456
+				#这是用户用读写分离的用户来访问代理服务器，还要指定端口才行，
+				#57上虽然没这个用户，但是它不有个路由用户吗，可以跑到51 52上看50输入的这个用户在51 52上有没有
+				#怎么才能看出已经成功实现了读写分离呢？我们可以跑到52从库里，给它插入一条数据，这时候主库不会同步这条数据的，所以我们再跑回50查看，就能看出结果是52给的
+
+二、mysql多实例
+	这个实验在50主机上做
+	1.什么是mysql多实例：
+		在一台主机上，运行多个数据库服务，现在我们不是一台服务器，运行一个数据库服务吗
+		我们之所以用多实例这项技术，是为了节约成本，提高硬件的利用率，但是这不也有风险吗，时间长了会慢，或者坏了，好几个数据库不就费费了吗
+		要想做这个多实例的功能，我们需要单独装其他版本的mysql，支持mysql多实例功能的mysql软件，现在5.7的版本不支持！
+	2.配置多实例：
+		2.1）我们需要先装新版的mysql源码包
+			去下载一个mysql-5.7.20-Linux-glibc2.12-x86_64.tar.gz 这个压缩包里有源码包，教学环境里提供的这个包是已经编译安装完的，所以直接解压就能用了
+			我们装新版的数据库之前，要把旧版本的mysql停掉systemctl stop mysqld  systemctl disable mysqld(这是关开机自启动命令)
+			解压完后，会生一个和压缩包同名的文件夹，里面是所有程序，
+			我们要把它移动到/usr/local下：
+				mv mysql-5.7.20-Linux-glibc2.12-x86_64 /usr/local/mysql  #并改名
+			看下这个文件夹列表下的内容都是什么：
+				bin：是提供mysql数据库管理命令的，以后你敲mysql命令，必须得敲命令的绝对路径了/usr/local/mysql/... ，因为这个不是源码包装的mysql吗
+				你直接敲的mysql命令是rpm包提供的
+				README support-files 这些文件或者文件夹都是提供模版文件的
+				docs man 这俩是帮助文档
+				include lib这都是数据库运行时要调用的一些文件
+		2.2）我们需要创建配置文件，来定义多实例文件，它的配置文件也叫/etc/my.cnf，所以我们得去把源码包的mysql配置文件挪走才行
+			mv /etc/my.cnf /root
+			然后再编写一个/etc/my.cnf,所要写配置的内容如下（每个实例要有独立的数据库目录和监听端口号，每个实例要有独立的实例名称和独立的sock文件）
+如果不开多实例的话，原本配置文件里应该有以下内容：
+datadir=		#指定数据库目录，要手动创建
+port=			#指定源码包的mysqld服务的端口号				
+log-error=  	#指定错误日志位置 日志文件
+pid-file=		#指定进程PID号文件 就是来区分mysqld用的端口号
+socket=		#我本机要想访问自己的数据库服务时，就要通过这个socket文件，
+			#socket文件是服务启动时自动加载的，默认存放在/var/lib/mysql下叫mysql.sock，服务要是停了，这个文件就没了！
+ 	
+				而现在我们要本机可以开启多个mysql，那么我们需要指定多实例程序，以下内容是要要往源码包mysql配置文件里写的内容：
+
+				[mysql_multi] 						#用来指定启用多实例程序
+				mysqld=/usr/local/mysql/bin/mysqld_safe        	#指定进程文件路径
+				mysqladmin=/usr/local/mysql/bin/mysqladmin    	#指定管理命令路径
+				user=root        						#指定进程用户
+				
+				[mysqld1] 							#每一个[mysqld]就相当于一个单独mysqld服务		
+				datadir=/data3307						#这些路径都是你自己定义的，它启动服务的时候，就会自己到指定位置去生成文件，目录要你自己建
+				port=3307								
+				log-error=/data3307/mysql2.err 
+				pid-file=/data3307/mysql2.pid	
+				socket=/data3307/mysqld.sock	
+				
+				[mysqld2]
+				port=3308
+				datadir=/data3308
+				socket=/data3308/mysqld.sock
+				pid-file=/data3308/mysql2.pid
+				log-error=/data3308/mysql2.err 
+			编写完成保存退出，去创建对应目录/data3307 和/data3308
+	3.使用多实例：
+		创建进程运行的所有者和组 mysql用户，当然你如果之前有源码包的mysql，这个用户就有了
+		 useradd mysql	 chown  mysql:mysql  /data*	
+
+		现在要启动实例的服务！有几个实例，启动几个,要敲绝对路径：
+			/usr/local/mysql/bin/mysqld_multi  start 1 	//1为实例编号，这是启动实例进程的命令，这个命令会自己初始化授权库
+			/usr/local/mysql/bin/mysqld_multi  start 2 
+			启动之后会有一堆输出信息，其中最后一行 root@localhost:ABCD123456789 这一堆16进制数，是登陆数据库的初始密码，要粘贴下来！      
+		如果想停掉多实例服务：
+			/usr/local/mysql/bin/mysqld_multi --user=root --password=数据库root的密码 stop 实例编号
+	4.验证多实例：
+		用初始登陆密码，连接实例服务
+		/usr/local/mysql/bin/mysql -u root -p'ABCD123456789' -S /data1/mysql3307.sock
+		#-S是指定套接字文件
+		给多实例配置参数：
+			所有操作都如同普通的mysql服务了，对应的表和库就都放在配置文件里写的目录下了
+			如果想对这个mysqld1配置参数什么的，就和之前学的一样了，就是开不开binlog日志什么的那些参数，需要停一次服务再开一次服务，因为没有restart选项
+		给多实例授权用户：
+			授权操作和普通mysql服务是一样的，但是用户怎么连这个实例呢？这50主机有俩实例mysql服务啊，所以应该跟 -P 来指定端口！
+			比如51上来访问50这个mysqld1实例：mysql -h172.25.4.50 -P3307 -u... -p'....'
+
+	
+
+
+
+
+
+
+
+
+
+

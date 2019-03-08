@@ -1,0 +1,30 @@
+配置网卡聚合连接：将网卡组合，生成一张虚拟网卡，理论上这张虚拟网卡，拥有两张网卡的带宽和传输效率
+	1.先创建虚拟网卡team0：
+	nmcli connection add con-name team0 type team ifname team0 autoconnect yes config '{"runner":{"name":"activebackup"}}'
+		#创建聚合连接，con-name是指定名称 type是指定类型 ifname指定网卡组名 autoconnect yes是指定开机自启
+	2.nmcli  connection  add  con-name  team0-p1  type  team-slave ifname eth1 master team0                                                 
+		#指定成员网卡，真实网卡eth1
+	3.nmcli  connection  add  con-name  team0-p2  type  team-slave ifname eth2 master team0
+		#指定成员网卡，真实网卡eth2
+	4. nmcli  con  modify  team0  ipv4.method  manual ipv4.addresses  "172.16.3.20/24"  connection.autoconnect  yes
+		#为聚合连接网卡team0配置IP地址
+	5.nmcli  connection  up  team0 
+		#激活聚合连接team0网卡
+	nmcli  con  up  team0-p1
+		#激活成员连接1
+	nmcli  con  up  team0-p2
+		#激活成员连接2
+	teamdctl  team0  state    //确认连接状态
+如果添加错了可以：
+	nmcli connection delete team0-1 #删除team0成员1
+	nmcli connection delete team0-2 #删除team0成员2 
+控制网卡的开启与关闭：
+	ifconfig eth2 down
+	ifconfig eth2 up
+	
+
+
+
+
+
+

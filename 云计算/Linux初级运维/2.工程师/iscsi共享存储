@@ -1,0 +1,73 @@
+iscsi共享存储（网络磁盘）：服务器提供磁盘空间，客户端连接并当成本地磁盘使用
+服务端iscsi服务部署：
+	iscsi分为3个部分：客户端看到的是target磁盘组
+		1.ackstore后端存储
+		2.target磁盘组
+		3.lun逻辑单元
+	1.划分一个空的且没有文件系统的空分区，作为共享磁盘（可以是整块磁盘，或者分区，或者逻辑卷）
+		fdisk /dev/hda
+			创建一个hda1
+	2.安装iscsi服务端软件包：
+		yum -y install targetcli
+	3.配置共享存储：可以依靠命令，而不修改配置文件，redhat7版本才可以
+		输入命令进入配置模式：targetcli
+		在配置模式里：
+		ls命令可以查看iscsi服务的详细信息
+		1）将空分区做成后端存储：
+			命令：backstores/block create dev=/dev/hda1 name=nsd1 
+				#dev=指定要共享的分区 name=随便起个名字
+		2）创建target磁盘组：
+			命令：iscsi/ create iqn.2016-02.com.example:server0     
+				#iqn.2016-02.com.example:server0 是磁盘组名称，起名有专门的规范：
+					iqn.年-月(月份必须是两位数).域名：自定义标识
+		3）做lun关联：将后端存储与磁盘组做关联
+			命令：iscsi/iqn.2016-02.com.example:server0/tpg1/luns create /backstores/block/iscsi_store 		
+		4）配置acl访问控制：设置客户端访问服务端，需要声称的名字，该名字也必须符合iqn规范
+			命令：iscsi/iqn.2016-02.com.example:server0/tpg1/acls create iqn.2016-02.com.example:desktop0	 	
+				#iqn.2016-02.com.example:desktop0 就是客户端访问共享磁盘需要宣称的名字
+		5）启用网络接口：开启本地监听的IP地址与端口
+			命令：iscsi/iqn.2016-02.com.example:server0/tpg1/portals/ create 0.0.0.0 3260
+				#0.0.0.0是允许所有IP访问，也可以指定IP访问，3260是iscsi服务端口
+		6）exit退出即可，然后重启服务，并设置开机自启动：
+			systemctl restart target
+			systemctl enable target
+客户端想要使用网络磁盘所需操作：
+	1.安装客户端软件：
+		yum -y install iscsi-initiator-utils.i686 
+			软件名称过长无法tab补全，可以用yum repolist生成缓存，就可以补全命令了
+	2.修改配置文件，指定访问服务端要声称的名字：
+		vim /etc/iscsi/initiatorname.iscsi
+		 写入：
+		 InitiatorName=iqn.2016-02.com.example:desktop0
+	3.重启iscsid服务，并设置开机自启：
+		systemctl restart iscsid  提示：如果出现warning字样就输入命令：systemctl daemon-reload
+		systemctl enable iscsid
+	4.让客户端发现服务端的共享存储：
+		iscsiadm --mode discoverydb --type sendtargets --portal 服务端IP –discover 服务端IP:3260,1 iqn.2016-02.com.example:server0
+		 #此命令较长可以通过man iscsiadm查看帮助信息全文查找example	
+	5.重启iscsi服务加载iSCSI网络磁盘：
+		systemctl restart iscsi
+	6.以上操作完成，就可以用lsblk命令查看硬盘状态了，会出先sd类型的磁盘，当然还要格式化和划分区使用
+		1）划分磁盘分区：
+		 fdisk /dev/sda 
+		 partprobe /dev/sda        //刷新分区表
+		2）为分区格式化：
+		 mkfs.xfs /dev/sda1
+	   	3）blkid /dev/sda1    #查看分区UUID值
+		4）为分区设置自动挂载，利用UUID值来挂载：
+		 vim /etc/fstab
+		  写入：
+		  /UUID="402d1304-5781-4349-8c43-ba45eba8b427"  /mnt/data xfs defaults,_netdev 0 0
+		5）挂载：mount -a 
+		查看挂载状态：df -h
+
+
+
+
+
+
+
+
+
+
+

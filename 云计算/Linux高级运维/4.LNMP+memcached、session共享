@@ -1,0 +1,135 @@
+session和cookie！！！[防止重复登陆]
+先考虑一个客户端访问一个服务器:
+   	先是用户输入地址栏访问这个服务器的动态网站。
+
+   	用户输入用户名密码发给服务器，如果登陆成功服务器会touch一个文件就叫session，里面写的就是随机生成的字符串，session存放在/var/lib/php/session
+
+   	然后服务器会给客户回复这个session文件，以数据包包头的形式，返回数据的包头叫cookie：里面写的就是id号，浏览器就收到了id号，但是用户看不出来。
+	下次用户再刷新访问，浏览器会将之前收到的id号，返回给服务器，这样用户就不用重复登陆了，就是cookie起的作用！客户是看不到的
+   
+   	如果想看过程，客户端就可以访问完之后，打开火狐浏览器——>按F12——>网络——>请求头里就有cookie
+   
+   	但是当出现集群的时候，cookie就不能用了！因为cookie可能是不同子服务器提供的,客户可能被轮询到不同服务器！
+	另一种需要重新登陆的情况，就是用户自己清除了本地cookie，也要重新登陆！
+
+   	其中一种解决方法是ip_cash，同一个ip一直访问一个web
+   	另一种方法，再有一台公共的数据库！web1 web2 都去找数据库！这种方法就叫session共享！
+为了实现第二种方法：
+先构建lnmp环境！
+     	web1 web2部署lnmp环境，如果之前开启了apche，别忘了停掉httpd
+     	nginx代理服务器，调度web1，web2，做7层httpd代理！
+     	web1 web2搭建php页面别忘了在nginx.conf设置动静分离，一个location匹配静态页面，一个匹配php页面
+     	web1 和 web2这个时候没有php的用户登陆页面，可以去找lnmp里找      
+     	可以cd lnmp_soft/php_scripts/  有提供好的登陆网页
+     	下面有个php-memcached-demo.gz 压缩包，解压之后会生成php-memcached-demo目录，里面有个index.php就是登陆页面，home.php是登陆进去的页面内容     
+     	为了能区分是web1还是web2，可以对这两个web里页面做一些修改，打开其中一台web里的index.php和home.php在<body>里写bgcolor=green
+
+	完事客户端去访问调度器，来看轮询的效果及session cookie免登陆一台web的效果，但是服务器如果把这个客户session删了，就要重复登了
+	（教学环境里，index和home页面是基于谷歌浏览器写的）
+	session存的是登陆状态！所以是可以删除的！有些公司为了保证客户的账户安全，40分就会删除session，所以不会永久存的！ 
+
+接下来讲解第二种解决方法！用数据库解决客户重复登陆的问题！（所用数据库是memcache）
+
+数据库相关知识：
+	SQL（关系型数据库）：oracle mysql sql_server 要想使用，必须有库有表，所有数据都是有关联性的
+	NoSQL（非关系型数据库 kv数据库）：
+		memcached redis mongodb 特别特别快，因为是占用内存的！所以可以用来做存cookie！可以毫无关联性，且不用永久存数据！cookie数据丢了也无所谓
+  		memcache不需要先有表和库，可以直接将数据保存，且可以各个数据可以没有关联性，但是它里面的数据不能永久存储
+		mem和redis都叫内存数据库，数据都存内存里，所以速度极其快，但是断电后所有数据全部丢失，但是redis可以将数据自动同步到硬盘，memcache是最早的非关系数据库
+      
+mem工作原理：
+ 	变量=值
+   	memcache完全符合要存session的特性！以后web1和web2的session信息都存memcache里
+   	QQ的文件中转站利用的就是memcached服务，先很快的上传，隔几天就会删
+
+数据存储位置对比：
+	性能对比
+	1.CPU缓存 2.内存 3.硬盘 4.数据库（因为数据库就是存放在硬盘里的，数据以后想打开，要先打开硬盘，再打开数据库，才能找出存储的数据）
+	价格对比
+	1.CPU缓存 2.内存 3.硬盘 4.数据库
+
+现在要在nginx代理服务器部署memcached服务，让web1 web2设置配置文件，来访问代理服务器的数据库，来解决客户重复登陆的问题
+nginx代理服务器操作：
+      yum -y install memcached
+	systemctl start memcached.service  
+
+知识点补充： 
+	以前6版本启动服务是service命令，现在7版本用systemctl，不管什么服务都可以用这个命令启动，但是得是yum装的所以才能这么启动，源码包装的就不能这么启动，
+  	得在/usr/lib/systemd/system 有以.service结尾的文件，所以要想用systemctl start nginx启服务， 这个目录下一定要有一个nginx.service的配置文件,	
+		vim /usr/lib/systemd/system/memcached.service看一下，
+			systemctl start memcached
+			[Service]
+			Type=simple
+			EnvironmentFile=-/etc/sysconfig/memcached	
+		#这里存放的就是下面要用的变量，存放变量的文件路径是/etc......这个路径
+			ExecStart=/usr/bin/memcached -u $USER -p $PORT -m $CACHESIZE -c $MAXCONN $OPTIONS          
+		# ExecStart=  的意思是当你用systemctl start memcached命令启动服务时，它真正执行的程序路径是/usr/bin/memcached  
+		所以要想让nginx可以systemctl启动，就把nginx的启动程序写在ExecStart=后面 -u 是指以什么用户启动，因为大部分服务的用户都是nologin的，所以一定要注意   
+		-p是指用什么端口启动 -m是指用多大内存 -c是指最大并发量是多少  后面的都是变量，而这些变量就存放在上面那句话里 
+    
+现在看一下存放上面文件变量的文件vim /etc/sysconfig/memcached:
+	PORT="11211"       #端口号
+	USER="memcached"   #以什么用户登陆这个服务
+	MAXCONN="1024"     #多少人可以同时访问这个服务
+	CACHESIZE="64"     #内存占用64M
+	OPTIONS=""
+	#以上完成！就可以用systemctl启动了，以及enable开机自启，这是原理！以后想用systemctl启动的话，就以memcache这个文件当模版就行，
+	如果不需要变量，就把之前文件中的变量文件那一行删除
+	systemctl  status  memcached这条命令可以查看这个服务的完整情况
+
+	netstat -anptu | grep memcached  是之前6的版本，现在7版本，可以用ss代替netstat，netstat命令可以查看系统中启动的端口信息
+
+回到正题，systemctl start mysqld 命令可以启动数据库，启动之后可以用mysql命令连数据库，但这是针对mariadb数据库的
+
+测试memcache数据库：
+	现在可以用真机也就是客户端telnet来远程连memcache数据库（先yum安装 telnet）telnet只是用来测试的，本来生产环境是代码自动连接的 
+	然后用命令telnet 192.168.2.5 11211 连memcached数据库服务功能，来实现增删改查
+	连进去之后输入对应的命令
+	set name 0 180 3         //定义变量，变量名称为name，0代表不压缩数据，180是只存180秒，3是指只存3个字符。然后回车就可以输入要存的字符了
+	get name 0 180 3         //获取name这个变量，可以读到name存的数据
+	add name 0 180 3         //可以添加变量name，只能新建，不可以覆盖以前的数据，以前有这个name变量就不行了
+	replace name 0 180 3     //只能用于覆盖已经存在的变量
+	append name 0 180 3      //向变量name中追加3个字符的数据，空格也算一个字符，时间会重新计时
+	delete name 		//可以直接删name这个变量
+	flush_all 			//可以清空memcache里的所有数据
+	value name 0 3           //输出name变量的结果
+	quit是退出
+      telnet就是用来简单测试memcache可不可以用的
+
+然后要让web1和web2用php代码自动连接nginx代理服务器的memcached数据库服务
+	lnmp压缩包里提供了自动连接memcached的脚本，叫做mem.php
+在web1和web2里操作（lnmp_soft/php_scripts/下有个mem.php）
+	vim /root/lnmp_soft/php_scripts/mem.php
+		<?php
+		$memcache=new Memcache;
+		$memcache->connect('192.168.2.5',11211) or die ('could not connect!! ');   
+			#连接哪台memcached服务器，连什么端口，或者没有连接成功，就显示could not connect!!这句话
+		$memcache->set('key', 'value');       #写入数据value这几个字符
+		$get_values=$memcache->get('key');    #查数据，将查到的数据赋值给get_values这个变量
+		echo $get_values;                     #输出这个变量，会显示value这几个字母
+  		?>
+
+	然后将这个mem.php文件分别拷贝到web1 web2的/usr/local/nginx/html下
+	以nginx代理服务器做memcached服务器，所以才指定192.168.2.5
+	但是现在web1 web2 没有php-memcache扩展包模块！之前装的是php-mysql模块
+	但是现在不知道该装的模块名，就可以用yum list | grep memcache 来找所有与memcache有关的包！
+	找到的php-pecl-memcache 就是连接memcache数据库的扩展包，装完之后，要重启动systemctl restart php-fpm解释器服务！web1 web2都做
+
+	最后客户端去访问2.5 2.100 2.200的mem.php页面都会看到value字符，但其实2.5现在没有mem.php，是调度web1 web2提供的
+
+	现在！web1 web2可以连接proxy的memcache了，可是他们的session还是默认会写到自己服务器里/var/lib/php/session下
+	需要修改配置文件来告诉web1 web2以后session往Nginx代理服务器中的memcache数据库里！
+	这个时候修改的不是web1 web2 的nginx配置文件，而是php配置文件！
+以web1为例：
+	vim /etc/php/fpm.d/www.conf 改这个文件的最后两行
+	php_value[session.save_handler] = files                #保存session是以files形式保存 所以files要改成memcache
+	php_value[session.save_path] = /var/lib/php/session    #这是session的保存路径  所以要改成"tcp://192.168.2.5:11211" 指定传输协议，和目标数据库和端口号
+	然后重启php-fpm
+
+再在web2做同样的操作！
+	完事以后，用客户端反复的访问4.5这台调度服务器的/index.php那个登陆页面！以后web1和web2的session就会只存在代理服务器的memcache数据库了，
+	客户端可以用命令：get +那个显示的session ID    来查看详细状态！
+
+ 
+
+

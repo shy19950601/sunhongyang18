@@ -1,0 +1,261 @@
+VPN！！虚拟专用网络！
+在公共网络上建立的专用私有网络，并进行数据加密，前提是你的公网一定要通
+多个公司之间做连接，用的就是VPN，这个网络想用什么协议传输数据，想怎么传输，都是你自己说了算
+在连接以后，各个地区的子公司可以像局域网一样通讯
+偶尔可以用来翻墙
+
+想看外面国家的网站网页，但是中国可是屏蔽的，在中国墙的外面找一台服务器，香港都行哦，你可以跟外面的这台电脑建立VPN网络连接，那台电脑肯定不会被封，让它去访问那些被屏蔽的网站，然后它把数据
+通过VPN私有网络给你，这就叫做翻墙！只有中国特么有这大防火墙！
+google是自然搜索，爬虫找到啥就返回啥
+而百度360啥的搜索，还是会人为屏蔽一些，或这系统屏蔽一些
+所以谷歌搜索引擎是不能用的
+想翻墙就去yahoo看看
+国内连买个服务器都要备案，域名也要备案，公司里VPN也得备案！！
+
+接下来做GRE vpn这是在两个linux之间做的，windows不支持
+
+先搭环境
+client 配eth3 201.1.2.10/24
+proxy 配eth3 201.1.2.5/24
+        eth0 192.168.4.5/24
+这两台机器的eth3都要先激活
+
+接下来构建VPN GRE
+linux的操作系统也是模块化的，默认不加载的，怎么加载内核模块
+lsmod  可以查看所有已经加载启动的模块
+modprobe ip_gre  来加载gre模块
+modinfo gre  可以查看这个模块的信息
+存放内核模块的位置： /lib/modules/3.10.0-...../kernel        3.10.0是内核版本，进入这个目录，下有个kernel，放的就是内核模块
+
+两个电脑都要确保GRE模块是激活的
+
+扩展内容关于ip help里的帮助信息：
+ip link可以查网卡的2层信息
+ip address可以查3层信息也可以改地址
+ip route可以配网关
+ip tunnel可以建立隧道：ip tunnel add/change/del/show name   可以增删改查隧道名字
+
+然后开始建立隧道！先在client操作                   
+ip tunnel add tun0  mode gre remote 201.1.2.5 local 201.1.2.10
+             建立隧道     工作模式     所连对面的ip     本地ip
+ip a s可以查看你的隧道网络信息
+现在隧道建立完了，该启用隧道了ip link set tun0 up,但是这个隧道两端本身没有ip,
+给隧道两端添加ip： ip addr add 10.10.10.10/24 peer 10.10.10.5/24 dev tun0
+                              这个ip随便写             对面的也随便写       
+现在该给proxy做操作了
+ip tunnel add tun0  mode gre remote 201.1.2.10 local 201.1.2.5
+ip link set tun0 up
+ip addr add 10.10.10.5/24 peer 10.10.10.10/24 dev tun0
+
+做完以后，10.5可以ping通10.10
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+第二种VPN pptp（只能做到部分数据加密）  windows支持，国家抓包抓到你没加密的数据是违法的，会封你
+先准备环境:
+proxy做VPN服务器  ，用windows连VPN， 把windows的NIC网卡，桥接到public2网卡上，因为你配置的网卡ip和public2是同网段，proxy也在这个网络里，连着真机呢！
+然后再启动windows虚拟机，给windows配ip: 201.1.2.20/24 proxy还用之前的ip
+要把windows的防火墙关闭掉，否则默认是不让PING的
+
+真实物理机有三张虚拟机网卡，每一个虚拟机网卡，相当于交换机
+private1           private2        public1     public2
+192.168.4.254          192.168.2.254                      201.1.2.254
+你克隆的linux机器，默认有4个网卡，你虚拟机网卡配的什么网段，就要将虚拟机连接到哪个真机的网卡网络里
+
+在proxy操作
+VPN软件包在lnmp_soft/vpn里
+下载里面的pptpd-1.4.0-2.el7........   安装它！
+可以rpm -qc pptpd 可以查这个软件有没有配置文件
+    修改配置文件
+vim /etc/pptpd.conf   改两行
+localip 201.1.2.5                                  //服务器本地IP
+remoteip 192.168.3.1-50                            //分配给客户端的IP池，谁连服务器，给谁直接分个ip，给分1-50
+    再改
+vim /etc/ppp/options.pptpd
+require-mppe-128                                  //使用MPPE加密数据给你用128bit位 加密，就是想告诉你贼鸡巴安全
+ms-dns 8.8.8.8                                    //DNS服务器，这个你要是翻墙，就得找国外的DNS
+name pptpd        //这是vpn服务器给自己起的名字，你甭管，但是得记住了，第三个文件得用
+   再改
+vim /etc/ppp/chap-secrets        //修改账户配置文件，需要手写，空的，写4列
+client              *或者写pptpd那个name          123456       *或者指定可以用的精确ip地址 
+//连VPN的用户名         //服务器标记                       //密码                 //允许登陆的客户端
+
+echo "1" > /proc/sys/net/ipv4/ip_forward    //开启软路由转发，这个命令，在7的环境里默认敲了
+ip_forward这个参数只要等于1，它就相当于路由器了，windows就能ping通所有这个服务器里连的网段设备了，改成0，这个功能就关了，当然了要想翻墙，这个路由功能就得必须开
+
+要是想翻墙还得敲个命令： iptables -t nat -A POSTROUTING -s 192.168.3.0/24 \
+>  -j SNAT --to-source 201.1.2.5          //做nat地址转换
+
+然后可以启动服务了systemctl start pptpd  systemctl enable pptpd
+
+windows右击网络，点属性，设置新得网络连接，连接到工作区，点下一步，使用internet连vpn，再选稍后设置，然后输入vpn服务器地址，起名叫啥都行，是给新的网卡起的名字，然后输入用户
+名，和密码。点创建，ojbk！
+更改适配器设置里面就多个网卡了，这个里面就需要点击连接，ojbk！双击可以看详细信息，就可以知道是分到得ip是啥了
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+GRE的VPN属于linux内核，无需下载安装。
+pptp需要安装软件，修改配置
+
+L2TP IPSec的VPN   其中L2TP和pptp作用一模一样，这种VPN所有数据都是加密的
+
+实验
+client做VPN服务器
+先装IPsec   安装包名称叫libreswan
+cat /etc/ipsec.conf   这个是IPsec的主配置文件
+include /etc/ipsec.d/*.secrets     主配置文件有这样一句话，意思，是可以自己建调用文件
+配置文件里很多需要手敲，有一个模板文件在lnmp_soft/vpn里叫myipsec.conf，可以拷贝到虚拟机里的/etc/ipsec.d下，用来参考，以后做vpn就可以用这个文件，这个文件主要就是用来做加密的
+ vim /etc/ipsec.d/myipsec.conf            
+//新建该文件，参考lnmp_soft/vpn/myipsec.conf    
+conn IDC-PSK-NAT                    
+    rightsubnet=vhost:%priv                        //允许建立的VPN虚拟网络
+    also=IDC-PSK-noNAT
+conn IDC-PSK-noNAT  //用什么办法加密
+    authby=secret                                    //加密认证
+        ike=3des-sha1;modp1024                        //算法
+        phase2alg=aes256-sha1;modp2048                //算法
+    pfs=no
+    auto=add
+    keyingtries=3
+    rekey=no
+    ikelifetime=8h
+    keylife=3h
+    type=transport
+    left=201.1.2.10                                //重要，服务器本机的外网IP
+    leftprotoport=17/1701
+    right=%any                              //允许任何客户端连接，any是允许所有人，可以写一个单独外网ip
+    rightprotoport=17/%any
+
+ipsec里有一个psk（预共享密钥），就相当于一个密码
+用户要想连VPN要提供： psk（ipsec），  用户和密码（L2tp）
+预共享密钥在哪看：cat /etc/ipsec.secrets      会看到include /etc/ipsec.d/*.secrets 一句话，意思是可以新建调用文件，但是要以.secrets为后缀
+vim /etc/ipsec.d/mypass.secrets        //新建该文件
+201.1.2.10   %any:    PSK    "randpass"             //randpass为预共享密钥   这句话意思是 我的外网ip是201.1.2.10 所有人都可以连我，这里可以写单独的ip，连我要提供PSK，randpass这串字符就是PSK密钥
+
+ipsec都改完了就可以启动服务了：systemctl start ipsec
+                          systemctl enable ipsec
+
+部署XL2TP服务
+1）安装软件包（软件包参考lnmp_soft），去lnmp里找，不在yum源里
+ yum localinstall xl2tpd-1.3.8-2.el7.x86_64.rpm
+2) 修改xl2tp配置文件（修改3个配置文件的内容） 和pptp一样改3
+vim  /etc/xl2tpd/xl2tpd.conf     //修改主配置文件
+.. ..    
+[lns default]
+.. ..
+ip range = 192.168.3.128-192.168.3.254                    //分配给客户端的IP池
+local ip = 201.1.2.10                                    //VPN服务器的本地IP地址
+
+ vim /etc/ppp/options.xl2tpd            //认证配置
+require-mschap-v2                       //添加这一行，强制要求认证
+#crtscts                                             //注释或删除该行
+#lock                                                //注释或删除该行
+
+ vim /etc/ppp/chap-secrets                    //修改密码文件
+jacob   *       123456  *                //账户名称   服务器标记   密码   客户端IP
+再打开路由转发echo "1" > /proc/sys/net/ipv4/ip_forward
+再设置NAT转换！
+iptables -t nat -A POSTROUTING -s 192.168.3.0/24 \
+>  -j SNAT --to-source 201.1.2.10
+
+windows就可以去验证了，验证步骤和pptp一样
+别改windows注册表，不然就废废了
+步骤二：客户端设置
+启动一台Windows虚拟机，将虚拟机网卡桥接到public2，配置IP地址为201.1.2.20。
+1. 新建网络连接（参考案例2），输入VPN服务器账户与密码（参考案例2）。
+设置VPN连接的属性，预共享密钥是IPSec配置文件中填写的randpass，具体操作如图-7所示。
+2. 设置Windows注册表（不修改注册表，连接VPN默认会报789错误），具体操作如下：
+单击"开始"，单击"运行"，键入"regedit"，然后单击"确定"
+找到下面的注册表子项，然后单击它：
+HKEY_LOCAL_MACHINE\ System\CurrentControlSet\Services\Rasman\Parameters
+在"编辑"菜单上，单击"新建"->"DWORD值"
+在"名称"框中，键入"ProhibitIpSec"
+在"数值数据"框中，键入"1"，然后单击"确定"
+退出注册表编辑器，然后重新启动计算机
+              windowsXP以后的版本无需做这么多操作，客户端可以ping通client上所有的ip
+
+接下来NTP时间服务器！
+以4.5为时间服务器
+NTP采用的是分层设计，最多只能到15层，第一层是国家的，第二层是你做的服务器，第二层可能是你公司的其他服务器，再可能是很多很多和上一层再同步，总共物理架构不要超过15层就行
+先装包 yum -y install chrony
+rpm -qc chrony                        //查看配置文件列表
+cat /etc/chrony.conf   //查看配置文件
+ 
+server ntp1.aliyun.com.iburst   //server用户客户端指向上层NTP服务器，这个上层服务器是阿里云的服务器，前提是你能连公网
+allow 192.168.4.0/24                        //允许那个IP或网段访问NTP
+#deny  192.168.4.1                        //拒绝那个IP或网络访问NTP
+local stratum 10                            //设置NTP服务器的层数量 15以内都可以写几都行
+
+客户端要做的也是这样的步骤！指定4.5为上层服务，然后重启服务
+
+4)然后启动NTP服务
+[root@proxy ~]# systemctl  restart  chronyd
+[root@proxy ~]# systemctl  enable  chronyd
+
+——————————————————————————————————————————————————————————————
+
+pssh远程套件工具 只需要你本机装pssh工具，其他机器不用装
+python写的可以实现多并发的远程工具
+有几个优点：用的前提是有ssh软件，Pssh可以同时连多台机器，且不会变慢，ssh只能一台一台连
+用proxy连client web1 web2  只有proxy需要安pssh
+首先给proxy装pssh，在lnmp_soft里
+yum -y install  pssh-2.3.1-5.el7.noarch.rpm 
+ 改一下解析：vim /etc/hosts   加3行
+192.168.4.10 host1         名字随便起
+192.168.2.100 host2
+192.168.2.200 host3
+ 新建一个文件
+ vim /root/host.txt     //每行一个用户名、IP或域名
+ … …
+ root@host1
+ host2
+ host3
+ … …
+第一个文件是用来方便远程！以后只要输入主机名就行了
+第二个文件是提前把要连的用户名，放在文件里，方便以后写脚本，root可加可不加，不加默认是以root身份登陆
+ 
+ man pssh                    //通过man帮助查看工具选项的作用
+pssh提供并发远程连接功能
+-A                使用密码远程其他主机（默认使用密钥）这个选项必须加
+-i                将输出显示在屏幕   要不要返回结果，建议加
+-H                设置需要连接的主机  这个是一台台手动连的意思
+-h                设置主机列表文件  这个是直接给文件，连一群
+-p                设置并发数量 这个是一次性最多连多少
+-t                设置超时时间 万一哪台死了，等它多久再连别的，以秒为单位
+-o dir            设置标准输出信息保存的目录  
+-e dir            设置错误输出信息保存的目录  
+-x                传递参数给ssh  这个必须加，后面接-o那个选项，来避免输入yes那个界面
+
+测试
+pssh -i  -A -H  'host1 host2 host3'  -x '-o StrictHostKeyChecking=no'   echo hello   如果密码不一致会让你输入多次密码！这个命令意思是让一群机器同时执行一个你输入的命令，不会直接进入那些机器，要是还想执行其他操作，还要再输入一遍pssh -i  -A -H  'host1 host2 host3'  -x '-o StrictHostKeyChecking=no'   echo byebye , 注意命令如果执行不了，会显示连接失败
+
+使用密钥批量、多并发远程其他主机
+1）生成密钥并发送密钥到其他主机
+[root@proxy ~]# ssh-keygen -N  ''   -f /root/.ssh/id_rsa     //非交互生成密钥文件，-N就是告诉机器空密码的意思-f就是指定密钥存放的路径
+然后要将密钥拷贝给所有要控制的主机！
+[root@proxy ~]# ssh-copy-id  host1
+[root@proxy ~]# ssh-copy-id  host2
+[root@proxy ~]# ssh-copy-id  host3
+2)使用密钥远程其他主机，然后就不用加-A了！不用输入密码了！
+[root@proxy ~]# pssh -h host.txt  echo hello
+
+pssh还有别的功能
+
+pscp.pssh 并发拷贝   只有一个选项-r递归 
+pscp.pssh -h host.txt test.txt /root/   我要给host.txt文件里的主机并发拷贝test.txt文件，到它们/root目录下
+
+pslurp 也是拷贝，但是是把对面主机里的资料拷贝回来你的机器，但是当多个机器，文件出现同名的话怎么解决？会出现对应的主机目录，来区分！
+pslurp -h /root/host.txt /etc/passwd /     我要从/root/host.txt文件里的主机内拷贝他们的/etc/passwd文件，拷贝到当前位置，那个根不是你主机的根目录，而是当前目录的意思，你当前在哪，就会创建对应主机名的目录，然后对应主机的文件会放在对应目录里。
+pslurp -h /root/host.txt -L /media /etc/passwd  /  -L是指定根目录的意思，这回/就是你本机的/media目录！
+
+
+批量、多并发杀死其他主机的进程
+pnuke -h host.txt  sleep  杀死这个文件里的主机中正在运行的sleep程序， 它不是精确的只杀sleep程序，只要进程名称里有sleep这几个字母的全杀
+
+—————————————————————————————————————————————————————————————————————————————————————————————
+
+
+
+
+
+

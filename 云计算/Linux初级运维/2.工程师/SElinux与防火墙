@@ -1,0 +1,85 @@
+SELinux（RHEL7的防护系统）：系统内部的安全防护，SELinux在强制状态下，做什么操作都会受限制，企业一般不开。 
+	三个状态：enforcing(强制状态) permissive(宽松) disabled(彻底禁用)
+临时更改SELinux状态的命令：
+	setenforce 1(强制)
+	setenforce 0(宽松)
+想要永久修改需要改配置文件/etc/selinux/config，并且需要重启后才能生效：
+	vim /etc/selinux/config
+	SELinux=enforcing 
+		#这一行为总开关，有效值可以是enforcing\permissive\disabled
+	SELINUXTYPE=targeted 
+		#targeted类型是对系统中的服务进程进行访问控制，mls类型将对系统中所有的进程进行控制，一旦启用该类型，执行简单的ls命令都会报错
+SELinux的布尔值：布尔值0 1；开 关；错 对 这样只有正反两个选项的值就叫布尔值
+	查看SELinux的所有服务设置开关：
+	 getsebool -a
+	修改SELinux指定服务的布尔值开关：以smb服务为例
+	 setsebool samba_export_all_ro on #ro的意思是只读 on即开放这个服务off是关闭
+将SELinux的非默认端口开放：
+			SELinux有三策略：
+				布尔值
+				安全上下文
+				非默认端口的开放
+			查看当前http服务可以使用的端口号：
+				semanage  port  -l  |  grep  ^http_port
+			添加新的用于http服务的端口号：
+				semanage  port  -a  -t  http_port_t  -p  tcp  8909
+修改SELinux的安全上下文策略：（只有拥有指定标签的目录，才可以用于作为网战根目录）
+			chcon  [-R]  --reference=/var/www  /nsd  #以/var/www为模版目录，赋予nsd与模版目录一致的上下文标签
+
+________________________________________________________________________________________________________________
+
+防火墙策略管理（RHEL7）：过滤入栈，数据出去简单，隔离过滤
+	管理工具：firewall-cmd(命令控制防火墙) firewall-config（打开图形控制防火墙）
+	red-hat7有4个预设定区域：
+		1.public区域：仅允许dhcp\ping\sshd等几个少数服务
+		2.trusted区域：允许任何访问
+		3.block区域：阻塞任何来访请求，并给出回应
+		4.drop区域：丢弃所有来访数据包，不给回应（节省资源）
+防火墙的配置方法：
+	1.永久更改默认区域：
+		firewall-cmd --set-default-zone=public
+		firewall-cmd --set-default-zone=trusted
+		firewall-cmd --set-default-zone=block
+		firewall-cmd --set-default-zone=drop
+	2.查看当前防火墙的区域：
+		firewall-cmd --get-default-zone
+	3.在不设置的情况下，默认区域是public，往这个区域里临时增加允许访问的服务：
+		firewall-cmd --zone=public --add-service=http #开放web服务，同理也可为其它三个区域增加服务
+		firewall-cmd --zone=public --add-service=ftp
+		注意：本机即使不增加这些服务也能访问，只是外界无法访问服务器的相关服务	
+	4.在区域里永久增加允许访问的服务：
+		firewall-cmd --permanent --zone=public --add-service=ftp
+	5.查看某个防火墙区域的所含服务：
+		firewall-cmd --zone=public --list-all
+	6.如果想要单独设置某个IP，拒绝其所有访问，可以把这个IP放到block区域：
+		firewall-cmd --permanent --zone=block --add-source=IP地址
+		firewall-cmd --permanent --zone=trusted --add-source=IP地址 #允许这个IP访问所有服务
+		防火墙会优先匹配对单个IP设置的规则
+	7.删除防火墙某个区域里的IP规则：
+		firewall-cmd --permanent --zone=block --remove-source=IP地址	
+	8.设置完成后需要刷新防火墙配置：
+		firewall-cmd --reload
+	9.利用防火墙实现端口的转发：
+		例：将5423端口作为80端口的映射，用户访问5423端口，看到的是80端口的程序
+		firewall-cmd --permanent --zone=public --add-forward-port=port=5423:proto=tcp:toport=80
+		然后刷新防火墙配置生效：firewall-cmd --reload
+		用户访问测试：firefox 172.25.0.11:5423
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

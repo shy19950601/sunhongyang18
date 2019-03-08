@@ -1,0 +1,289 @@
+     SVN和GIT是一个原理，GIT厉害一些
+Subversion是版本控制系统    
+可以实现所有文件和文件夹随意切换，所有文件都不会丢失，还允许多人合作同时改同一个文件
+SVN服务器有一个共享文件夹，所有人可以通过这个共享文件夹，修改里面的文件，这个文件夹叫版本库
+
+如果是本地用户访问这个文件夹，可以直接访问；也可以远程通过svnserve软件访问；或者用户通过apache网页访问这个文件夹
+
+这个软件还有合并的功能，只要你上传的时候，它就会自动保存到其他地方做备份，当你把一个文件改完之后，再上传，SVN会问你是否合并，最终上传的，既有你的，也有别人的版本。
+
+接下来安装部署SVN服务器
+在web1 和 web2 装Subversion  以web1做服务器 以web2做客户端
+ yum -y install subversion
+以web1做共享服务器，做仓库
+ 先创建存放仓库的目录，以后仓库放这里：mkdir /var/svn/ 
+ 创建空仓库： svnadmin create /var/svn/project     #就出来一个project共享目录，且必须是以这个命令创建。   
+            ls /var/svn/project/     
+里面包含这些内容：conf/  db/  format  hooks/  locks/  README.txt    
+
+接下来倒入数据：
+ cd /usr/lib/systemd/system/    #这里面放的是启服务的配置文件
+ 将这里面的文件倒入SVN仓库： svn import . file:///var/svn/project/ -m "Init Data"   倒入到当前目录下的文件 倒入这个仓库里，倒入完之后版本默认是1 ,file:// 是为了
+指定本地SVN仓库的路径  -m是加注释说明 "注释"
+ 但是以数据库形式导入的，找不到的，只能以svn的命令来查看里面的内容
+
+现在修改配置文件及启动服务：  /usr/lib/systemd/system/conf下有3文件都要改，从右往左修改 1改4行所有配置文件都要顶头写，开头不能有空格
+vim /var/svn/project/conf/svnserve.conf
+[general]
+### These options control access to the repository for unauthenticated
+### and authenticated users.  Valid values are "write", "read",
+### and "none".  The sample settings below are the defaults.
+anon-access = none          #这4行去掉注释
+//19行，匿名无任何权限，默认可以读
+auth-access = write         
+//20行，有效账户可写
+password-db = passwd         
+//27行，密码文件，passwd文件里写有效用户和密码
+authz-db = authz
+//34行，ACL访问控制列表文件，可以针对每一个数据目录做权限
+
+ vim /var/svn/project/conf/passwd    添加两个账户和密码
+[users]
+harry = 123456
+//用户名和密码
+tom = 123456
+//用户名和密码
+
+ vim /var/svn/project/conf/authz 
+[/]    #这个根是指仓库的根目录，即/var/svn/project，也可以对某个在这个路径下的文件，做精准的权限设置！当然通常还是对整个目录设置
+harry = rw                        //用户对项目根路径可读可写
+tom = rw
+
+改完上面3个文件，启动SVN服务
+命令：svnserve -d -r /var/svn/project     #-d是放后台 -r是要共享哪个目录，也可以不加r，当你不加r时，客户访问要在ip后面写这个仓库的绝对路径
+
+可以netstat -nutlp |grep svnserve 查看端口信息
+tcp        0      0 0.0.0.0:3690    0.0.0.0:*    LISTEN      4043/svnserve  
+
+可以在web2访问测试，前提web2有SVN软件
+cd /tmp   然后将SVN里的文件下载到这
+svn --username harry --password 123456\   #这是登陆命令
+co svn://192.168.2.100/ code      #将数据从svn192.168.2.100剪出来，放到code目录里，code在当前目录位置，输入yes是记住密码
+
+web2 cd进这个目录查看/tmp/code里面下载下来的文件
+将里面的文件做下修改，并提交给SVN服务器
+ svn ci -m "modify user"        //提交，即使你不指定！SVN也能感知到   加注释说明 -m “注释”
+[root@web2 ~]# cd /tmp/code
+[root@web2 code]# ls
+[root@web2 code]# vim user.slice                 //挑选任意文件修改其内容
+[root@web2 code]# svn ci -m "modify user"        //将本地修改的数据同步到服务器
+
+
+以后所有的操作都是无人值守的，都是在客户端操作的，服务器上也查不到
+
+co		命令有个缺点，把有变化和没变化的全下载一遍，这个时候你要是想更新的话，就可以输入update
+svn update   这个命令就可以将所有发生变化的文件下载下来
+
+svn info 	可以查看SVN服务状态的信息
+svn log 	可以查看详细日志，可以看到每一个人的提交
+[root@web2 code]# svn update                    //将服务器上新的数据同步到本地
+[root@web2 code]# svn info     svn://192.168.2.100    //查看版本仓库基本信息
+[root@web2 code]# svn log     svn://192.168.2.100    //查看版本仓库的日志
+
+
+新建一个文件，然后上传，svn ci -m “xxx”  发现，上传没反映！需要输入命令 svn add 文件名  先让SVN服务器管理，再输入svn ci -m “xxx”，才能上传这个文件，效果如下
+[root@web2 code]# echo "test" > test.sh       	//本地新建一个文件
+[root@web2 code]# svn ci -m "new file"            //提交失败，该文件不被svn管理
+[root@web2 code]# svn add test.sh                	//将文件或目录加入版本控制
+[root@web2 code]# svn ci -m "new file"            //再次提交，成功
+
+[root@web2 code]# svn mkdir subdir                //创建子目录
+[root@web2 code]# svn rm a.txt                    //使用svn删除a.txt文件，但是删除的是本地的
+[root@web2 code]# svn ci -m "xxx"                 //提交一次代码，更新已经删除的,和新建subdir的新版本
+但是删除只是删除的当前版本的，之前版本里的a.txt是删除不了的！！！！！
+
+查不同！
+输入命令：   svn diff  				#在web2上查看和SVN服务器有什么不一样，没反应是没不同              
+显示效果：   Index:是不同的文件
+           +xxx ：是增加了内容xxx
+	     svn diff a.txt                      #仅查看某一个文件的差异
+svn cat svn：//192.168.2.100/a.txt  #如果上面的命令知道了，a.txt这个文件不同，那就看一下服务器里的这个文件
+cat a.txt    #再看看本地的这个文件对比一下
+
+三种不同发生错误情况的还原方法：
+1.
+sed -i 'd' tmp.mount             //删除文件所有内容，但未提交  
+可以利用命令svn revert tmp.mount   //还原tmp.mount文件 
+
+2.
+rm -rf  *.target              //任意删除若干文件
+svn update                    //还原
+
+3.不小心提交了
+sed -i '1a #test###' a.txt   //修改本地副本中的代码文件
+svn ci  -m  "xxx"            //提交代码    是不小心提交的
+svn merge -r7:2  a.txt       //将文件从版本7，即当前版本，按实际情况看，还原到版本2,会显示经过3到2
+
+svn co -r1 svn://192.168.2.100 xyz  下载第一版的xyz ，不写r1就是下载最新版的xyz
+
+但是实际生产环境中，web2这个客户端是windows，可以下载TortoiseSVN软件，来实现上述操作
+
+——————————————————————————————————————————————————————————————————————————————————————————————
+
+SVN除了支持单机的工作，还支持多人同时合作，当多人同时提交的时候，会怎么样！除了冲突！就是同时多个人改一行是无法解决的！
+
+继续SVN操作！
+
+svnserve 端口4043
+             3690
+svnserve 有systemctl 的service文件，可以设置开机启动，但是里面没有-r，需要在systemctl里的service补一个-r
+
+web1 web2再做一遍SVN的下载操作
+[root@web1 ~]# cd /tmp
+[root@web1 ~]# svn --username tom --password 123456 \
+> co svn://192.168.2.100/ code
+[root@web2 ~]# cd /tmp
+[root@web2 ~]# svn --username harry --password 123456 \
+> co svn://192.168.2.100/ code
+
+然后要对这个文件做操作，就要cd /tmp/code里才能继续操作
+[root@web1 ~]# cd code
+[root@web2 ~]# cd code
+
+（web1）harry 和 （web2）tom 改不同文件，所以提交完，每个人都欠一个别人改的文件，就可以上传完之后，web1 web2都做一个svn update操作
+[root@web1 mycode]# sed -i "3a ###tom modify#####"  tmp.mount
+[root@web1 mycode]# svn ci -m  "has modified"
+[root@web2 mycode]# sed -i "3a ###harry modify#####"  umount.target
+[root@web2 mycode]# svn ci -m "has modified"
+[root@web2 mycode]# svn update
+[root@web1 mycode]# svn update
+
+web1和web2修改相同版本文件的不同行，谁先提交都行，后提交的会提示过期。后提交的需要svn update一下，但是放心它不会将你改的覆盖掉，而是和你的改过的行，做一个合并。
+[root@web1 mycode]# sed -i "3a ###tom modify#####" user.slice
+[root@web1 mycode]# svn ci -m  "modified"
+[root@web2 mycode]# sed -i "6a ###harry  modify#####"  user.slice
+[root@web2 mycode]# svn ci -m "modified"        //提交失败
+Sending        svnserve
+Transmitting file data .svn: Commit failed (details follow):
+svn: File '/user.slice' is out of date（过期）
+[root@web2 mycode]# svn update                    //提示失败后，先更新再提交即可
+[root@web2 mycode]# svn ci -m "modified"        //提交成功
+
+harry和tom修改相同版本文件的相同行，在提交时会报错冲突！
+解决方法：要么mc 要么tc 回车，也可以p先推迟....
+第二种解决方法：
+web2或者web1上操作：
+[root@web1 code]ls 这是你们改的文件，可以看到4个文件
+1.user.slice  2.user.slice.老版本  3.user.slice别人改的新版本
+4.user.slice你改的新版本   
+你可以将2和3都删除掉，然后，用4把1覆盖掉mv user.slice你改的版本 user.slice    然后提交
+以下是详细步骤
+[root@web1 code]# sed  -i  '1c [UNIT]' tuned.service
+[root@web1 code]# svn ci -m "modified"
+[root@web2 code]# sed  -i  '1c [unit]' tuned.service
+[root@web2 code]# svn ci -m "modified"
+Sending        tuned.service
+Transmitting file data .svn: Commit failed (details follow):
+svn: File '/tuned.service' is out of date(过期)
+[root@web2 code]# svn update                    //出现冲突，需要解决
+Conflict(冲突) discovered in 'tuned.service'.
+Select: (p) postpone, (df) diff-full, (e) edit,
+        (mc) mine-conflict, (tc) theirs-conflict,
+        (s) show all options:p                    //选择先标记p，随后解决
+[root@web2 code]# ls tuned.service
+tuned.service   tuned.service.mine        tuned.service.r10    tuned.service.r9
+[root@web2 code]# mv tuned.service.mine tuned.service
+[root@web2 code]# rm  -rf  tuned.service.r10 tuned.service.r9
+[root@web2 code]# svn ci -m "modified"    //解决冲突
+
+
+对整个SVN仓库备份！这些操作都是在code里执行的
+svnadmin dump /var/svn/project > a  //备份仓库里的所有文件和所有版本，使其变成a！a在当前code里
+svnadmin create /var/svn/project2   //再新建一个空仓库
+svnadmin load /var/svn/project2 < a      //可以把a导入新仓库！
+
+———————————————————————————————————————————————————————————————————————————————————————————————
+
+这个回家一定要好好玩！！！！是全世界最优秀的代码都在这个网站里！！！！
+注册使用Github  里面用的不是SVN而是Git
+git是分布式版本控制软件
+这个网站非常重要，许多资料都在这里，这里可以当作网盘！且也是全备份，功能基本与SVN一样！
+登陆网站https://github.com，点击Sign up（注册）
+
+构成：
+ 仓库-----工作目录（修改上传的地方）
+平时用户就是把 “仓库-----工作目录（修改上传的地方）”完整下载下来 ，这样数据就完整的被众多用户下载下来了，每一个用户都可以作为服务器！数据就更不容易丢失了！
+但是操作也更复杂，用户下载就不叫剪出了，而是克隆！
+
+http://github.com/账户名/仓库名        输入这一串，全世界的人都可以下载这个仓库里的内容，但是没有账户名和密码是无法上传的
+如果你是这个仓库的主人，想用linux操作这个git，可以在linux系统里下载这个仓库
+yum -y install git
+输入命令：git clone https://github.com/账户名称/仓库名称    #clone指令用于将服务器仓库中的资料打包下载到本地
+[root@pc001 ~]# cd 仓库名称
+[root@pc001 ~]# 任意修改文件，或新建文件
+[root@pc001 ~]# git add .        #add添加新文件让仓库管理
+[root@pc001 ~]# git commit -m "test"     #只能打全称，这个提交是提交到自己的仓库，而不是网站上的那个服务器里
+[root@pc001 ~]# git push         #commit和push实现提交代码的功能  回传给总服务器，就可以去网站上看看了
+[root@pc001 ~]# git pull         #pull更新，类似于svn update
+
+———————————————————————————————————————————————————————————————————————————————————————————————
+
+在web1上做RPM包，把源码包做成RPM包好处：DVD里自带软件只有4000多个，而且是3年前推的，软件旧，可以网上自己下，但是很多是源码包，安装麻烦。
+RPM包是可以放进仓库里的，creadtrepo命令就可以。
+制作前提需要工具：
+1. yum -y install rpm-build
+然后可以敲命令：rpmbuild-ba nginx.spec   #这个nginx.spec不存在，所以会报错，虽然会报错，但是会在根里生成一个rpmbuild目录，里面的SOURCES是放源码包的子目录，最终成果在RPM这个子目录里
+SPECS是需要做工作的目录
+RPM本质是一种压缩包，是对程序的压缩，也是源码变rpm的流程
+以nginx源码包为例做RPM包
+ cp /lnmp_soft/nginx-1.12.2.tar.gz /root/rpmbuild/SOURCES/     拷贝到这里
+然后去SPECS下写一个文件，文件的扩展名，必须是.spec
+im /root/rpmbuild/SPECS/nginx.spec ，当你打开时，内容就已经出来了，让你填写
+Name:nginx        #软件名称描述，必须对    
+Version:1.12.2    #版本号，必须对
+Release:    10    #第几个RPM版本，随便写
+Summary: Nginx is a web server software.   #描述，随便写   
+License:GPL       #GPL开源协议，意思是说可以随便改，但是改完之后必须也要开源
+URL:    www.test.com    #网址，无所谓
+Source0:nginx-1.12.2.tar.gz    #在SOURCE里面那个压缩包名称
+#BuildRequires:       #依赖包！写了也没用，不会解决安装
+#Requires:            #依赖包的提示
+
+%description
+nginx [engine x] is an HTTP and reverse proxy server.    //这里面写的是详细注释
+
+
+%post  //这下面写，安装完的脚本在这里写,可以写病毒哦，可把密钥下载到你本地，以后连你就不用密码了。
+useradd nginx
+
+%prep
+%setup –q                      //自动解压源码包，并cd进入目录，你上面的SOURCE写的谁，它就自动解压谁
+
+%build
+./configure --模块名 --prefix=指定路径 --user=xyz   //装什么模块，装在哪，用什么用户登陆
+make %{?_smp_mflags}  编译
+%install
+make install DESTDIR=%{buildroot}  安装
+
+%files
+%doc
+/usr/local/nginx/*            //去哪打包文件目录做成RPM包，前面prefix指定了，就写指定的路径，如果没写，/usr/local/nginx是默认路径
+
+rpmbuild创建RPM软件包
+rpmbuild -ba /root/rpmbuild/SPECS/nginx.spec                     #这次是让上面这个编译完的rpm包生效
+ls /root/rpmbuild/RPMS/x86_64/nginx-1.12.2-10.x86_64.rpm         #没问题之后，会在这里生成这个RPM包
+rpm  -i /root/rpmbuild/RPMS/x86_64/nginx-1.12.2-10.x86_64.rpm    #可以安装这个RPM包了，但是得敲绝对路径。
+
+除了RPMS以外，rpmbuild里还有个SRPMS里也有rpm包，这个rpm包里一个是源码包，和一个你写的生成rpm包配置
+
+可以用yum info nginx 查看软件包详细信息了！
+
+以后yum/rpm的命令都可以操作这个nginx包了
+
+rpm -qpl nginx 如果nginx没装，可以通过这命令看里面的软件清单
+
+———————————————————————————————————————————————————————————————————————————————————————
+
+
+
+
+
+
+
+
+
+
+
+
+
+

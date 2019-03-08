@@ -1,0 +1,311 @@
+iscsi存储！  
+题外：scsi，有个scsi卡，可以插到主板上，然后外接硬盘，可以多接好多块硬盘，现在不这么玩了，后来都变成内置在主板上了，它的接口改名叫IDE接口了，但是速度太慢，太占空间，又进化成sata口了
+       服务器上对sata又改造了，叫sas口，对应的磁盘叫sas盘，比sata快的多，sas现在最快每分钟15000转   这些都是直连
+主机里的存储手机里的存储，叫DAS直连存储，空间有限
+NAS网络附加存储（文件系统）代表：Samba nfs httpd   客户端不需要做任何事，拿过去就能用
+SAN网络存储（块）共享的是块设备 代表：iscsi    在客户端里多了一块盘，必须得分区格式化挂载
+FC是用光纤实现得存储，成本高，iscsi就是基于这个造出来得，一个光口网卡就得6000多，线钱还不算，得接到光的交换机和光的路由器里，后来就变成基于以太网的
+
+iscsi实验：
+proxy做服务器  web1做客户端  先给proxy加20G硬盘用于实验            
+安装iSCSI服务器软件
+1）使用yum安装targetcli软件包
+yum  -y  install  targetcli
+给硬盘做分区，来确定多少空间做共享：
+parted /dev/vdb mklabel gpt（非交互式的操作）      parted /dev/vdb mkpart primary 1 100%
+2)使用targetcli定义后端存储
+设置需要将哪个设备共享给其他主机，这里将/dev/vdb1设置为后端共享磁盘。
+targetcli
+/> ls
+/> backstores/block create store /dev/vdb1  先创建一个后端存储盘
+备注：store为任意名称
+3）创建iqn对象
+给iSCSI共享设置一个共享名称，客户端访问时需要使用该共享名称。
+/> /iscsi create iqn.2018-01.cn.tedu:server1
+4) 授权客户机访问
+类似于一个密码，设置ACL访问控制，拥有iqn.2018-01.cn.tedu:client1这个字符串的客户端才有权限访问服务器。
+/> iscsi/iqn.2018-01.cn.tedu:server1/tpg1/acls create iqn.2018-01.cn.tedu:client1
+5) 绑定存储
+将iqn共享名称（iqn.2018-01.cn.tedu:server1）与后端实际的存储设备（vdb）绑定。
+/>iscsi/iqn.2018-01.cn.tedu:server1/tpg1/luns create /backstores/block/store 
+#注意：block后面的store必须与前面步骤2定义后端存储create创建的名称一致。
+6) 存储绑定服务监听的地址，并保存配置
+/> iscsi/iqn.2018-01.cn.tedu:server1/tpg1/portals/    
+/> saveconfig     保存配置
+/> exit
+启动服务
+systemctl  {start|restart|stop|status} target
+systemctl enable target
+
+客户端需要操作步骤安装软件
+yum -y install iscsi-initiator-utils 下载对应的软件包
+2）设置本机的iqn名称
+   vim /etc/iscsi/initiatorname.iscsi 
+InitiatorName=iqn.2018-01.cn.tedu:client1
+注意：必须跟服务器上配置的ACL一致！
+3）发现远程target存储
+提示：参考man iscsiadm！里的example  万一不想要了可以logout
+ iscsiadm --mode discoverydb --type sendtargets --portal 192.168.2.5 --discover
+ iscsiadm --mode node --targetname iqn.2018-01.cn.tedu:server1 --portal 192.168.2.5:3260 --login  注意改服务器方的ip
+
+     客户端挂载iSCSI共享
+ lsblk
+NAME          MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sda             8:0    0  20G  0 disk    
+     多了一个sda设备
+sr0            11:0    1 1024M  0 rom 
+vda           252:0    0   20G  0 disk
+
+并启动服务
+ systemctl restart iscsi 
+
+这块磁盘归你了，你就可以分区、格式化、挂载
+[root@web1 ~]# parted /dev/sda mklabel gpt
+[root@web1 ~]# parted /dev/sda mkpart primary 1 800
+[root@web1 ~]# mkfs.xfs /dev/sda1
+[root@web1 ~]# mount /dev/sda1  /mnt
+[root@web1 ~]# umount  /mnt
+
+————————————————————————————————————————————————————————————————————————————————————————————————
+附加课外实验：多台FTP或者http主机使用共享存储。
+这里以FTP为例，web1和web2主机都安装vsftpd软件，给client提供FTP服务，web1 web2都使用proxy的后端共享存储设备，然后把iscsi磁盘挂载到pub目录下，当client访问web1的pub目录进行读写操作时，会发现，第二次去看web2的目录时，也发生了相同的变化！ iscsi的磁盘允许多台设备同时挂载！
+[root@web1 ~]# mkdir /var/ftp/
+[root@web1 ~]# mount /dev/sda1  /var/ftp/
+[root@web1 ~]# yum -y install vsftpd
+[root@web1 ~]# sed -i 's/^#anon/anon/' /etc/vsftpd/vsftpd.conf
+备注：修改vsftpd配置文件，开启匿名上传功能。将下面2行默认的注释行打开。
+#anon_upload_enable=YES
+#anon_mkdir_write_enable=YES
+[root@web1 ~]# chmod 777  /var/ftp/pub
+[root@web1 ~]# systemctl start vsftpd
+[root@web1 ~]# systemctl enable vsftpd
+client访问web1的FTP共享，并任意上传一个文件到FTP服务器。
+3）当web1宕机后，web2主机可以继续使用iscsi提供FTP共享服务。
+Web1关闭vsftpd服务，卸载iscsi挂载。
+[root@web1 ~]# systemctl stop vsftpd
+[root@web1 ~]# umount /var/ftp
+添加iSCSI共享（web2操作）。
+[root@web2 ~]# vim /etc/iscsi/initiatorname.iscsi
+InitiatorName=iqn.2018-01.cn.tedu:client1
+注意：必须跟服务器上配置的ACL一致！
+[root@web2 ~]# iscsiadm --mode discoverydb --type sendtargets --portal 192.168.2.5 --discover
+[root@web2 ~]# iscsiadm --mode node --targetname iqn.2018-01.cn.tedu:server1 --portal 192.168.2.5:3260 --login
+安装部署vsftpd软件(web2操作)。
+[root@web2 ~]# yum -y install vsftpd
+[root@web2 ~]# sed -i 's/^#anon/anon/' /etc/vsftpd/vsftpd.conf
+[root@web2 ~]# chmod 777 /var/ftp/pub/
+[root@web2 ~]# systemctl start vsftpd
+[root@web2 ~]# systemctl enable vsftpd
+
+————————————————————————————————————————————————————————————————————————————————————————————
+
+部署Multipath多路径环境
+web1 和 proxy 有两条完全独立的路径连接，来做到冗余！这两条路径要两个网卡 两个网线 两个交换机 ！来避免其中一块网卡GG，直接GG。
+
+proxy有俩网卡了，现在要给web1的eth3配ip
+
+实现此案例需要按照如下步骤进行。
+步骤一：存储服务器上添加额外的磁盘（如果已经完成案例1，此步骤可以忽略）
+使用KVM软件新建（或修改）虚拟机，为虚拟机额外添加一块硬盘。
+
+步骤二：存储服务器上安装并配置共享存储（如果已经完成案例1，此步骤可用忽略）
+
+以下是proxy提供的iscsi存储操作
+1) 定义后端存储
+[root@proxy ~]# targetcli
+/> ls
+/> backstores/block create store /dev/vdb1
+2）创建iqn对象                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+/> /iscsi create iqn.2018-01.cn.tedu:server1
+3) 授权客户机访问
+/> iscsi/iqn.2018-01.cn.tedu:server1/tpg1/acls create iqn.2018-01.cn.tedu:client1
+4) 绑定存储
+/>iscsi/iqn.2018-01.cn.tedu:server1/tpg1/luns create /backstores/block/store 
+5) 绑定存储绑定监听地址，并保存配置
+/> iscsi/iqn.2018-01.cn.tedu:server1/tpg1/portals/ create 0.0.0.0
+/> saveconfig 
+/> exit
+
+然后客户端web1要再发现一遍proxy的4.5网卡,之前发现过2.5网卡了
+ iscsiadm --mode discoverydb --type sendtargets --portal 192.168.4.5 --discover
+然后重启服务systemctl restart iscsi
+          systemctl enable iscsi
+
+
+web1会发现出现两块共享磁盘，虽然名字不一样，但是其实是一块磁盘，但是真正该用的是这两块磁盘的结合才对，就像链路聚合，给这俩磁盘起个别名
+需要一个软件来做这个磁盘别名操作
+ yum install -y device-mapper-multipath
+拷贝这个软件的配置文件。因为不在标准目录下，需要拷贝到etc下
+cp /usr/share/doc/device-mapper-multipath-0.4.9/multipath.conf  /etc/
+这个时候要获取这个磁盘的名字，这俩磁盘虽然不叫一个名，但是是一块盘，我们要的是它的wid！
+ /usr/lib/udev/scsi_id --whitelisted --device=/dev/sdb 这条命令可以查wwid，最后那个也可以是sda，都一样
+把查到的wwid复制
+vim /etc/multipath.conf
+multipaths {
+    multipath {
+        wwid    "360014059e8ba68638854e9093f3ba3a0"
+        alias   mpatha  //这个是取别名
+    }
+}
+这里可以再写另一个硬盘！这个就叫多路径，但是，现在我们只有一块盘，所以不写
+multipath {
+       。。
+       。。
+    }
+}
+
+保存退出，重启服务
+[root@web1 ~]# systemctl start multipathd
+[root@web1 ~]# systemctl enable multipathd
+
+然后你再lsblk会看到，mpatha1，当你需要挂载的时候，需要/mount/mapper/mpatha #不在dev下！
+这样就实现了，一块磁盘两条路径挂载到web1里
+multipath -rr 可以查看多路径详情
+然后就可以ifconfig eth0 down看详情，坏了就消失了，弄好了就会自动回来了
+
+———————————————————————————————————————————————————————————————————————————————————————
+
+为了保证实验不受上次实验的影响，要做iscsi logout注销操作，分别注销2.5和4.5
+iscsiadm --mode node --targetname iqn.2018-01.cn.tedu:server1 --portal 192.168.2.5:3260 --logout
+iscsiadm --mode node --targetname iqn.2018-01.cn.tedu:server1 --portal 192.168.4.5:3260 --logout
+如果网线被down掉了，一定要up回来再做logout注销操作！
+并且在proxy服务器把iscsi配置文件删除 rm -rf /etc/target/saveconfig.json
+并把proxy上的iscsi的共享磁盘删掉！    
+上述步骤是为了保证下面的实验不受影响
+
+配置并访问NFS共享
+proxy服务器利用NFS机制发布2个共享目录，要求如下：
+将目录/root共享给192.168.2.100，客户机的root用户有权限写入
+将/usr/src目录共享给192.168.2.0/24网段，只开放读取权限
+从客户机访问NFS共享：
+分别查询/挂载上述NFS共享目录
+查看挂载点目录，并测试是否有写入权限
+
+服务器上操作：
+软件包nfs-utils用来提供NFS共享服务及相关工具，而软件包rpcbind用来提供RPC协议的支持，这两个包在RHEL7系统中一般都是默认安装的
+1.先改NFS配置文件vim /etc/exports
+/root 192.168.2.100(rw,no_root_squash)    //将/root共享给2.100 ，但这个其实是个特例，因为当你试图以服务器root的权限去挂载的时候，nfs服务为了安全会自动把root转换为nfsnobody用户！所以要打这句话意思不把root降级！
+/usr/src 192.168.2.0/24(ro)
+2.启动NFS共享相关服务，确认共享列表
+依次启动rpcbiind、nfs服务：
+systemctl restart rpcbind  ;  systemctl enable rpcbind
+systemctl restart nfs ;  systemctl enable nfs
+使用showmount命令查看本机发布的NFS共享列表：
+showmount  -e  localhost
+Export list for localhost:
+/usr/src 192.168.2.0/24
+/root    192.168.2.100
+
+
+从客户机访问NFS共享
+
+1）启用NFS共享支持服务
+客户机访问NFS共享也需要rpcbind服务的支持，需确保此服务已开启：
+[root@web1 ~]# systemctl restart rpcbind  ;  systemctl enable rpcbind
+2）查看服务器提供的NFS共享列表
+[root@web1 ~]# showmount  -e  192.168.2.5
+Export list for 192.168.2.5:
+/usr/src 192.168.2.0/24
+/root    192.168.2.100
+3）从客户机192.168.2.100访问两个NFS共享，并验证权限
+将远程的NFS共享/root挂载到本地的/root5文件夹，并验证可读可写：
+[root@web1 ~]# mkdir  /root5                              //建立挂载点
+[root@web1 ~]# mount  192.168.2.5:/root  /root5          //挂载NFS共享目录
+[root@web1 ~]# df  -hT  /root5                          //确认挂载结果
+Filesystem        Type  Size  Used Avail Use% Mounted on
+192.168.2.5:/root nfs    50G   15G   33G  31% /root5
+[root@web1 ~]# cd  /root5                              //切换到挂载点
+[root@web1 root5]# echo "NFS Write Test" >  test.txt     //测试写入文件
+[root@web1 root5]# cat test.txt                          //测试查看文件
+NFS Write Test
+将远程的NFS共享/usr/src挂载到本地的/mnt/nfsdir，并验证只读：
+[root@web1 ~]# mkdir  /mnt/nfsdir                      //建立挂载点
+[root@web1 ~]# mount  192.168.2.5:/usr/src  /mnt/nfsdir/      //挂载NFS共享目录
+[root@web1 ~]# df  -hT  /mnt/nfsdir/                          //确认挂载结果
+Filesystem           Type  Size  Used Avail Use% Mounted on
+192.168.2.5:/usr/src nfs    50G   15G   33G  31% /mnt/nfsdir
+[root@web1 ~]# cd  /mnt/nfsdir/                          //切换到挂载点
+[root@web1 nfsdir]# ls                                  //读取目录列表
+debug  install.log  kernels  test.txt
+[root@web1 nfsdir]# echo  "Write Test."  >  pc.txt  //尝试写入文件失败
+-bash: pc.txt: 只读文件系统
+如果从未授权的客户机访问NFS共享，将会被拒绝。比如从NFS服务器本机尝试访问自己发布的/root共享（只允许192.168.2.100访问）
+设置永久挂载
+[root@web1 ~]# vim  /etc/fstab
+.. ..
+192.168.2.5:/usr/src  nfsdir         nfs  default,ro   0 0
+192.168.2.5:/root     root5         nfs  default      0 0
+
+——————————————————————————————————————————————————————————————————————————————————
+
+编写udev程序规则
+什么是udev：负责管理所有的设备！U盘网卡显卡等！
+udev负责什么：1设备叫什么名字 2设备有没有快捷方式（2.6以后的版本） 3设备（磁盘U盘光盘等）有什么权限  4决定触发事件  
+
+编写udev规则，实现以下目标：
+当插入一个U盘时，该U盘自动出现一个链接称为udisk
+U盘上的第1个分区名称为udisk1，以此类推
+终端上出现提示信息”udisk plugged in”
+
+udev默认规则存放在/etc/udev/rules.d目录下面 你需要自己去这个目录下新建文件，后缀名是.rules即可，在这个文件里敲你决定的规则
+ 在插入u盘前输入 udevadm monitor --property 这条命令可以实时查看服务器硬件设备变化，如果有变化，就会把信息显示出来！
+会显示出来2遍U盘信息有几个重要信息：
+  VENDOR  这一行写的是U盘的品牌
+  SERIAL  这一行写的是U盘的序列号
+  DEVRYPE	设备的类型 disk的意思是磁盘 下面这个部分会再显示一遍这个信息，显示的是partition分区，因为只做了一个一个分区，所以只显示一遍磁盘信息和一个分区信息，如过这个U盘做了8个分区，就要显示8遍！
+  DEVNAME  这个写得是磁盘绝对路径，和分区绝对路径 
+  ACTION   这一行写的是当前设备的动作是插设备action或者拔设备remove
+
+udevadm monitor --property 这条命令只对当前发生变化的设备有效！它才能显示信息！
+那么对于已经有的设备怎么看信息？
+udevadm info --query=path --name=/dev/sda   先看设备的路径，后面写的是设备名，可以去dev看设备名，所有硬件设备都在这个目录下，显示出来的最后的路径就是要查的路径
+udevadm info --query=property --path=/block/sda  告诉电脑，我不是实时查的，是根据路径查的
+   
+该查的都查完了，该写规则了！
+要实现U盘插入时触发事件！
+   wall命令，可以实现你敲什么，屏幕显示什么，功能类似echo，区别是广播！连到这个linux的任何终端都可以看到这个信息！echo只能自己的终端能看到，但是你在udev配置文件里要执行wall这个命令必须要敲绝对路径，用which wall找一下绝对路径：/usr/bin/wall
+    接下来udevadm info --query=property --path=/block/sda/sda1  //查U盘里的分区信息
+ 复制VENDOR品牌和序列号
+然后写规则！vim /etc/udev/rules.d/a.rules  
+   需要注意的是这个文件有规则： 
+==是判断的意思                                                                      =是赋值；参数和参数之间用“，”分隔；
++=是在原来的设置基础上或者原来的值上追加新的操作或新的值                         ENV这个单词叫变量！ENV这个也是个命令，可以直接显示所有的环境变量；
+：=是赋值的意思且不可以被修改	                                               !=表示不匹配
+NAME="" 定义设备名称                                                                SYMLINK=""是为设备制作别名
+OWNER="zhangsan"定义设备的所有者   					       GROUP="lisi"定义设备的所属组
+MODE="777"定义设备的权限     						       ACTION="add或者remove"
+KERNEL==""判断设备的内核名称   						       RUN+=为设备添加触发程序
+
+
+在这个文件里写入：
+ENV{ID_VENDOR}=="TOSHIBA",ENV{serial}=="xxx",RUN+="/usr/bin/wall usbusb"
+解释：判断ID_VENDOR这个变量是TOSHIBA,并且serial是xxx的设备，RUN+=是追加触发事件,不管是插入该设备还是拔出该设备，都显示usbusb！
+写完，保存退出即可。
+
+然后插拔验证一下，会显示多条信息，因为它识别了多遍，无所谓
+
+需要注意的是这个触发事件非常牛逼！不需要root权限，就可以触发！并且在同一个文件里，可以写多条规则！
+例如：
+ENV{ID_VENDOR}=="TOSHIBA",ENV{serial}=="60A44CB4665EEE4133500001",ACTION=="add",RUN+="/usr/bin/systemctl start httpd"
+ENV{ID_VENDOR}=="TOSHIBA",ENV{serial}=="60A44CB4665EEE4133500001",ACTION=="remove",RUN+="/usr/bin/systemctl stop httpd"
+就可以达到插拔指定U盘，来实现特定的触发事件，命令要写绝对路径！
+
+玩完了触发事件的命令RUN+=  该轮到改名的玩法NAME= 和创建快捷链接的玩法SYMLINK="/dev/cdrom" 了，不过最好不要改名，因为可能是“:=”
+ENV{ID_VENDOR}=="TOSHIBA",ENV{DEVTYPE}=="partition",SYMLINK="usb1"    //当确定设备名是TOSHIBA，并且设备类型是分区，为其制作一个别名usb1
+这个usb1有个小技巧，因为你插入的可能是个移动硬盘，硬盘可能有多个分区哦并且每个分区都满足上面你写得要求，那这些分区该怎么制作快捷方式？   
+可以写usb%n，对应分区会制作出对应的usb几！有几个分区，做几个链接！
+
+还可以为指定设备设置上述各种规则
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+
+
+
+
+
+
+
+
+
+

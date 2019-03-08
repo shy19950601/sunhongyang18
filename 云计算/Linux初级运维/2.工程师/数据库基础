@@ -1,0 +1,64 @@
+数据库：存放数据的仓库，数据库软件中有很多的库，在每一个库中，会有很多表
+	常见的数据库软件：微软的SQLserver IBM的DB2 甲骨文的Oracle、MySQL 社区开源版的MariaDB（基本和mysql一致）
+数据库的安装部署：
+	1.安装相关软件：
+		yum -y install mariadb-server
+	2.启动服务：
+		systemctl start mariadb
+		systemctl enable mariadb
+数据库的基本操作：
+	提示：
+		数据库的命令与Linux命令无关，且不支持tab
+		数据库的所有用户存放于mysql库中的user表里，且管理员也叫root
+	第一次进入数据库命令，无密码时：mysql
+在Linux系统里为数据库修改密码：（数据库的配置文件在/etc/my.cnf）
+	命令：mysqladmin -u root -p旧密码 password '新密码'  （如果旧密码为空，可以不写-p）	
+	再登陆数据库应输入：mysql -u root -p密码
+实验：切断数据库网络，使其仅服务于本机
+	修改配置文件：
+		vim /etc/my.cnf
+		在 [mysql] 里写：skip-networking #跳过网络监听
+		然后重启数据库systemctl restart mariadb
+在Linux里将数据导入数据库里：
+	mysql -u root -p123 nsd1811 < users.sql
+	#以root身份，密码123，将users.sql表导入到nsd1811库
+进入数据库模式里的操作：必须以 ; 做命令结束
+	显示所有库：show databases;
+	创建nsd库：create database nsd;
+	删除nsd库：drop database nsd;
+	退出数据库：exit
+
+	表的组成：表记录 表字段（列）
+	表的操作：insert(增) delete(删) updatae(改) select(查)
+	查询命令格式：select 表字段 from 库名.表名;
+	切换到某个库里：use 库名;
+		（进入到这个库，想对别的库里的表操作，需要写完整路径）
+	查看当前库里的表：show tables;		
+	查看base表里的所有表字段信息：select * from base;  (base表在当前库里，相对路径)	
+	有条件的查询：select 表字段 from 库名.表名 where 表字段='内容'
+		例1：select * from base where password='123' 
+			#查看base表里的所有字段，筛选出password对应的是123的信息行。
+		例2：select * from base,location where base.name='a' and location.city='b' and base.id=location.id
+			#查找base表和location表，要求base表里的name是a，location表里的city是b，且base表里的id和location表里的id必须一样的行信息 
+		    select count(*) from base,location where base.name='a' and location.city='b' and base.id=location.id
+			#count(*) 是只显示符合要求的行数量
+	为base表增加表记录：insert base values ('6','c','123')  #相当于依次往base表里增加6、c、123这三列	     								
+	查看表的结构：desc 库名.表名;
+	给可以登陆数据库的用户做授权：
+		grant select on nsd1811.* to lisi@localhost indentified by '123';
+		#允许lisi@localhost这个用户登陆数据库时，可以查询nsd1811库里的所有表，登陆时所需要的密码是123。
+		grant insert on nsd1811.* to lisi@localhost indentified by '123';
+		grant delete on nsd1811.* to lisi@localhost indentified by '123';
+		grant update on nsd1811.* to lisi@localhost indentified by '123';
+	禁止空密码的root登陆mariadb数据库：user表里用于存放数据库相关的管理员，里面有多个root用户
+		先切换到mysql系统库里：use mysql；
+		查user表里的user host password这三列信息：会显示可以登陆数据的相关用户
+			select user,host,password from user;
+			#查到的结果是所有的mysql软件用户
+			select user,host,password from user where password='' delete from user where password='';
+			#删除密码为空的用户行信息
+		user等系统表操作完应刷新数据库：flush privileges;
+		以主机地址登陆用户：-h 后面接host列的地址
+			mysql -u root -h server0.examle.com
+
+

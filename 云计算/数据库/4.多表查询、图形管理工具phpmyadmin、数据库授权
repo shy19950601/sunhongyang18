@@ -1,0 +1,221 @@
+一、多表查询
+	生产环境中不可能一张表存下所有数据，也不可能from一张表
+	以淘宝卖家为例：
+		要一张用户信息表
+		要一张卖家信息表
+		要一张商品信息表
+		要一张销售信息表
+		要一张库存信息表
+	1.复制表
+		作用：备份和快速建表，但是你复制的表字段的 key键值、默认值、额外属性 不会被复制过来,需要我们自己填
+		将源表复制为新表 命令：create table  库名.表名 sql查询;
+			例：我们要把db3库里的user表备份到db4库里，新表名自定义
+			create table db3.new select * from db3.user; #
+			如果我们只想要表结构，而不想要表记录：
+			create table db4.new1 select * from db3.user where 1=2;
+			也就是说，我们想复制的表是什么样子，完全取决于我们sql查询出来的结果。
+	2.多表查询方法
+		我们平时查单表的格式：select 字段列表 from 表名 where 条件;
+		1）多表查询：
+			意义：
+				将2个或2个以上的表，按某个条件连接起来，从中选取需要的数据，当多个表中存在相同意义的字段（字段名可以不同）时，可以通过该字段将多个表连接起来
+				就以达内为例子，可能有 交费表 班级表 成绩表 就业表 这几张表，这几张表里都有个学生学号这列字段，这个学号就可以把这些表连接起来
+			格式：
+				没条件的查询（笛卡尔集两个表记录个数的乘积）：select 字段名列表 from 表a,表b;
+				有条件的查询（仅显示与条件匹配的）：select 字段名列表 from 表a,表b where 匹配条件;
+			例子：
+			我们先建两张表
+			create table db4.2 select name,uid,shell from db3.user limit 3; #复制user表里的name,uid,shell这仨字段，并且只要前3行
+			create table db4.3 select name,password,uid from db3.user limit 5;  #....
+			我们要查t1,t2表的所有字段值信息，条件是，t1表的uid=t2表的uid的值：
+				select * from db3.t1 db3.t2 where t1.uid=t2.uid;
+			我们要查t1，t2表的所有字段值，条件是t1表里name是root的，t2表里name也是root的行，当然他们这俩表的name这一整段的值是完全一样的，这样就能看到root用户的
+			name、uid、shell、password这些信息：
+				select * from db3.t1 db3.t2 where t1.name="root" and t2.name="root";
+		2）嵌套查询：
+			意义：
+				使用的就是where子查询：就是把外层的查询结果，作为外层的查询依据！				
+			格式：
+				select 字段名列表 from 表a，表b；
+				单表嵌套查询：select 字段名列表 from 表名 where 条件； <-这个条件是（select 字段名列表 from 表名 where 条件）
+				多表嵌套查询：select 字段名列表 from 表a，表b where 条件；<-这个条件是（select 字段名列表 from 表名 where 条件）
+				例子1：
+				输出表1中年龄小于平均年龄的学生的名字和年龄
+					select name,age from 表1 where age<(select avg(age) from 表1);  
+					#但是为什么不直接写age<avg(age)呢？ 因为函数命令不能做查询条件，你表记录一旦发生改变了，它的平均值也就变了，所以必须用一次查一次！！！
+				例子2：
+				从t1表里输出name列的值，要求name中值的范围是在user表里shell不是/bin/bash的用户。
+				select name from 表1 where name in(select name from db3.user where shell!="/bin/bash");				 			
+		3）左连接查询：
+		左右连接的使用场景：比如你公司有两张表，一张老员工表，一张有以老员工为基础有新员工加入的新员工表，这两张表表结构一模一样，所含内容有一样的有不一样的，我们就可以
+		利用左右连接查询的方式，来查询一些特定的信息！
+			作用：查询条件成立时，以左表为主显示查询结果。
+			命令格式：select 字段名列表 from 表1 left join 表2 on 条件；  #这里就会以表1为主，显示信息
+			例子：
+			先创建两张表：create table t3 select name,ui,shell from db3.user limit 3;
+					create table t4 select name,ui,shell from db3.user limit 6;
+			select * from t3 left jion t4 on t3.uid=t4.uid;
+			#以t3表为主表，显示t3表和t4表里的所有内容，并且只显示它们俩表uid相同的行，因为t3为主表，它只有3行，所以只显示3行，t3表在左
+			select t3.* from t3 left jion t4 on t3.uid=t4.uid
+			#这就是只显示t3表里符合要求的行
+		4）右连接查询：
+			作用：查询条件成立时，以右表为主显示查询结果。
+			命令格式：select 字段名列表 from 表1 right join 表2 on 条件；  #这里就会以表2为主，显示信息
+			例子：
+			先创建两张表：create table t3 select name,ui,shell from db3.user limit 3;
+					create table t4 select name,ui,shell from db3.user limit 6;
+			select * from t3 right jion t4 on t3.uid=t4.uid;
+			#以t4表为主表，显示t3.t4表里的所有行，显示的是t3、t4表里uid相同的行，因为t4表是主表，所以一共显示6行，t3表里不到6行的表记录都以null空值显示，t4表在右
+			select t4.* from t3 right jion t4 on t3.uid=t4.uid;
+			#这就只显示t4表里符合要求的行，而不是俩表都显示
+二、mysql服务图形管理工具 之 phpmyadmin
+	1.连接数据库的方式：
+		命令行（效率好，可以跨平台，windows和liunx连数据库的命令都是mysql，操作命令俩系统上也是一致的）
+		web页面连接 （需要安装软件，或程序员自己开发）-> phpmyadmin (跨平台，开源，需要LAMP平台环境)
+		图形工具 （需要安装软件，或程序员自己开发）->mysql-workbench（跨平台，mysql官方提供）
+							      ->mysql-front（开源，轻量级，只支持windows）
+								->navicat（专业，功能强大，只支持windows）
+	2.软件介绍
+		phpmyadmin这款软件，既适合数据库管理员使用，也适合存储数据的程序员使用，这要将对应的程序安装在web服务目录下，就可通过网页的形式来操作编辑数据库，
+		这个软件是php语言写的，安装php解释器就可以了，然后直接将这个软件的目录拷贝到网页服务目录里就可以了		
+	3.安装phpadmin软件	
+		软件包可以在网上下载最新版，也可以使用教学环境提供的
+		1）部署lamp环境（linux apache mysql php）关于php的两个软件需要安装：php (php解释器) php-mysql(用于连接mysql数据库的包)
+			yum -y install httpd php-mysql php
+			systemctl start httpd
+			systemctl enable httpd
+		2)将对应的压缩包phpmyadmin-2.11.11-all...tar.gz拷贝到数据库服务器（主机50）里,并解压
+			tar -xf phpmyadmin-2.11.11-all...tar.gz -C /root
+			其中phpMyAdmin-2.11.11-all-languages这个目录就是用于存放php脚本的文件，我们要将这个文件夹移动到web网页服务目录
+			mv /root/phpMyAdmin-2.11.11-all-languages /var/www/html/admin
+			现在其实就可以用了，但是这个图形软件还没有指定数据库，那它操作谁去阿，所以接下来还要改配置文件，使这个软件连接到50的数据库
+		3）修改这个软件的主配置文件
+			以拷贝过来的目录来说，这个主配置文件就是/var/www/html/admin/config.sample.inc.php 不过这个文件是模板文件
+			我们需要把这个模板文件复制一下，也粘贴在admin目录下:
+			cp config.sample.inc.php config.inc.php #去掉sample就成了主配置文件了
+				php语言补充： <?php 所有代码在这里写 ?>   /* */ 这一对是php里的注释 每条代码都要以 ; 结尾
+			vim /var/www/html/admin/config.inc.php
+			改第17行: 
+				$cfg['blowfish_secret'] = ''; /* YOU MUST FILL IN THIS FOR COOKIE AUTH! */
+				#这行写的是给浏览器存的cookie信息，随便写就行，' ' 这里不能为空			
+			改第31行：
+				 $cfg['Servers'][$i]['host'] = 'localhost';
+				#这行写的是，指定数据库服务器地址，因为我们50主机提供数据库服务，而这个管理工具也装在50主机上，所以用localhost，
+				如果管理工具在别的机器上，就要指定50服务器，mysql服务器ip地址了
+		4）客户端访问phpmyadmin软件：
+			http://192.168.4.50/admin #这一行不就相当于 mysql -u -h localhost -p"" 吗
+			客户看到的就是index.php提供的功能页面
+		5）登陆phpmyadmin：		
+			输入的用户名和密码是50服务器的数据库本地用户的密码
+		
+三、用户授权与权限撤销 (需要3台服务器 50 51 52)
+	默认只有数据库服务器里的root超级数据库管理员才有授权权限！
+	数据库root密码恢复：（这是你linux系统里root干的）
+		1）先把mysql服务程序停掉
+		2）修改mysql数据库的配置文件
+			vim /etc/my.cnf
+			写入：
+			skip-grant-tables 
+				#这句话的意思是跳过mysql服务的授权表，启动mysql服务！
+			除了写这一行，如果还有密码验证策略一定要注释掉！否则会启动失败！
+		3）然后重启服务，这回就可以直接用mysql命令登陆数据库了！
+		   然后我们就该修改user表里的授权用户root了！
+			user表里的字段解释：
+				host字段是指授权用户的主机地址，有哪个ip，哪个才能访问数据库服务器里的数据库服务！
+				User是登陆使用的用户名
+				authentication_string是用户登陆密码
+		  那么我们就可以查上述3个字段了来看相关信息：
+			select host,user,authentication_string from mysql.user;  #默认只有两行信息
+			其中authentication_string 这列的密码是通过 password("你设置的密码") 这个函数加密显示的！
+		  我们该改的就是root用户的密码字段的记录：
+			update mysql.user set authentication_string=password("123456") where host="localhost" and user=root;
+		  完事之后，还要在数据库里输入：
+			flush privileges; 
+			#这条命令是刷新设置的意思，因为系统库和系统表都是需要刷新才能生效的！ 
+			然后exit退出数据库
+		  然后再重新把/etc/my.cnf 里的skip-grant-tables这句话删除，把密码策略注释删掉，再重新启动数据库服务
+		  再登陆的时候，就可以用新密码登陆了！					
+	数据库root本机登陆密码修改：
+		利用系统管理员在linux系统里，通过原密码，改新密码，命令：
+		mysqladmin -u root -h localhost -p'旧密码' password'新密码'   #出现的warning警告代表你成功了 
+
+	1.什么是授权：
+		在数据库服务器上，添加连接用户，并设置权限
+		例如，我们拿51这台机器（前提有mysql软件）连50数据库服务器：
+			mysql -u root -h 192.168.4.50 -p'123456' 会发现，我们51这台服务器是没有权限的！
+			以游戏公司为例，用户访问游戏网站，然后注册用户名和密码，而用户访问的其实就是51这个跳板服务器，再由51这个服务器把数据提交给50这台真正的存储服务器！
+			所以一定要给51这台服务器授权！
+	2.授权命令格式：
+		grant 权限列表 on 数据库名.表名 to 用户名@'客户端地址' indentified by "密码" with grant option；		 
+	3.mysql授权库：
+		mysql服务中的系统库，有个库名叫mysql，这里存放的就是授权信息，当然还有其它信息！
+		mysql库里的user表就是记录已有的授权用户
+		mysql库里的db表记录已有的授权用户，对数据库服务器上已有库的访问权限
+		mysql库里的tables_priv表记录已有的授权用户，对哪些表有什么权限
+		mysql库里的colums_priv表记录已有的授权用户，对哪些表中的字段有什么权限
+	授权的信息会存储到50数据库服务器上,其中with grant option的意思是，这个授权用户也有给别的用户授权的权限，这个可以不写
+		数据库名可以写*，就是给这个用户设置对所有库都设置权限，表名也可以写*
+			关于权限列表的表示：
+				all 匹配所有权限
+				select 、 drop 、 update 、 insert #对整张表的权限
+				select 、 drop 、 update 、 insert(指定字段) #对指定字段的权限
+			关于客户端地址的表示：
+				指定ip地址，也就是哪个机器才能使用新授权的用户，不是指定的ip机器，知道用户名和密码也登陆不了！
+				% 代表所有主机
+				192.168.4.% 代表的是192.168.4这个网段的主机
+				192.168.1.1 这是仅这一台主机才可以
+				%.tarena.com 这个是指定这个域名范围里的所有主机，前提你服务器的DNS有这个域名的解析！
+				www.a.com 这个是指定这一个完整域名的单台主机，前提DNS能解析！
+		例子：新建用户mydba,对所有库、表有完全权限，允许任何地址访问，密码设为s1cr2t,并允许这个用户给别的用户授权！
+			grant all on *.* to mydba@'%' indentified by 's1cr2t' with grant option;   
+			#这个授权用户的密码也受配置文件的密码策略限制
+			然后可以本机验证一下：
+			select * from mysql.user where user="mydba" \G;   #竖着显示
+			客户端51可以测试授权：
+				mysql -u mydba -h'192.168.4.50' -p's1cr2t'
+				为了防止分不清是哪台主机在使用数据库服务，可以：
+				select user(); #这个函数就是获取当前登陆数据库服务的授权用户信息的！
+				select @@hostname; #就是看当前服务器的linux系统用户名！
+				查看当前登陆数据库服务的用户所拥有的权限：
+				select grants;
+				也可以查看指定库或表的权限：
+				select grants from 库名.表名；
+		例子2：grant select,insert on db3.user to admin@'localhost' indentified by '123456';
+			#这是给admin这个用户开放查找和增加权限，并且只能对db3里的user表有效，而且只能是在数据库服务器本机里登陆，其它主机上知道用户名和密码，也无法登陆！
+			我们可以在50上用这个用户登陆一下，并查看一下库：
+			show databases;
+			#我们会发现除了有权限的库，其它库都看不到了，表也同理，其中有个infomation_schema 这个库其实是虚拟库，不存在的，你也没没法子操作它！
+	4.撤销权限的命令格式：
+		revoke 权限列表 on 数据库名.表名 from 用户名@"客户端地址";
+			比如撤销授权用户的可以给别的用户授权的权限：
+			revoke grant option on *.* from mydba@'%';
+			撤销mydba的删除所有表和所有库的权限：
+			revoke delete on *.* from mydba@'%';
+			撤销指定用户的所有权限：
+			revoke all on *.* from mydba@"%";
+	5.删除授权用户的命令格式：
+		drop user 用户名@"客户端地址";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,405 @@
+数据备份，与数据恢复 
+以下三大点，都是使用的逻辑备份
+	我们在实际工作中，要考虑的：
+		1.数据备份频率，数据多，就应该备份的勤
+		2.数据备份时间，我们应该在服务器访问量少的时候，执行数据备份操作。
+		3.还要考虑数据备份文件的名字：日期_库名.sql
+		4.数据备份文件的存放的位置：不要存放到数据库服务器本机，存备份数据的服务器空间应该可以扩展
+		5.自动备份的手段：
+			1）crontab + 数据库备份脚本
+			2）部署服务，实现备份数据（mysql主从服务器数据同步）
+	数据备份方式：
+		物理备份：
+			直接拷贝库和表对应的文件 /var/lib/mysql/...
+			可以通过cp和tar等方式备份
+			cp -r /var/lib/mysql /opt/a #这就把整个数据库备份了
+			tar -zcf /mysqla /var/lib/mysql
+			一定要记住！你冷备份是不能备份一张单表的！或者一个单库的，因为你所复制的单库和单表里，没有记录每一条命令的事务日志！没有给命令做sln编号！
+		物理恢复：
+			把备份的文件再拷贝回去，前提一定要把数据库服务关掉！
+			例如：
+				我们想让51这台服务器，有50服务器的全部数据，就可以把50服务器的所有数据库文件全部打包，然后传给51服务器：
+				tar -zcf /mysqla /var/lib/mysql  #我们就可以把这个叫mysqla的打包文件传给51服务器，再将其解压即可
+				然后我们把51服务器的mysql目录删除，再将拷贝的50的mysql目录拷贝/var/lib下面即可！
+				cp -r 解压的文件夹绝对路径 /var/lib
+				还要改这个目录的权限，因为这个是拷贝的，所以自动权限变成root了，我们要改成mysql
+				chown -R mysql:mysql /var/lib/mysql
+				然后就可以重新启动服务了，这回51加载的就是50的数据库文件了	
+	
+		物理备份与恢复的缺点：虽然简单，但是如果数据量大，就会很费时间，而且这个也不支持跨平台，兼容性不好，因为不同系统的文件系统是不一样的
+		逻辑备份：使用mysql提供的命令对数据做备份，根据执行备份已有的数据，生成对应的数据文件。
+		逻辑恢复：使用mysql提供的命令调用备份文件，做数据恢复
+
+	数据逻辑备份策略：
+		完全备份：备份所有数据
+		备份新产生的数据：
+			差异备份：备份完全备份后，所有新产生的数据
+			增量备份：备份上次备份后，所有新产生的数据
+		在生产环境中通常使用的本分策略：		
+			完全+差异
+			完全+增量 增量备份就是利用binlog实现的备份，因为我们每做一个新的修改的操作，都会被记录到binlog日志文件里，这不就是增量吗！
+		如果我们用差异备份的话，可能会造成备份重复，也就是冗余！当然好处就是我用最后一天的数据，就可以还原所有天数的备份，除了完全备份的那天数据！
+    		增量备份，就是每天备份一次新产生的数据，我们要想把所有数据还原，就需要用到每天所有的备份文件		
+			
+	一、完全备份（mysqldump）
+		使用mysql服务自带的mysqldump命令，做完全备份：
+		备份命令格式：在liunx系统里输入 
+				mysqldump -u root -p'密码'  数据库名 > 备份文件名  
+			 	#当然不是root是别的授权用户也可以，只要对该库有权限即可
+				关于命令中库名的表示：
+					--all-databases 或 -A 	是备份所有库的意思
+					数据库名 		是指定备份单个库
+					数据库名 表名 		是指定备份单张表
+					-B 数据库1 数据库2	是指备份数据库1数据库2 可以写多个库
+				例如：mysqldump -u root -p'123' --all-databases > /opt/a   #这个a就是备份后的文件！我们要恢复数据的时候，就调用这个文件		
+			
+		数据恢复命令格式：在liunx系统里输入 mysql -u root -p'密码'  数据库名 < 备份文件名
+				例如：mysql -u root -p'' --all-databases < /opt/a
+					#你备份文件一定要记清楚，是备份的什么东西，写清楚了，才能知道该怎么恢复数据啊！
+					#就比如，我们要给51这个服务器拷贝50服务器上的db3库，就把50的db3备份文件拷贝到51上，然后mysql -u root -p'..' < /root/b  这个b是备份文件
+					#如果你是 -B 备份的库，那你恢复的时候就不用写数据库名！只有你要恢复指定库里指定表时候写数据库名！想恢复表，但是没有指定库，就自己建一个同名的库
+		但是这个完全备份是有缺点的，因为你备份完之后的数据库信息，很可能会发生变化，它不是实时的！
+		还有就是完全备份在恢复的数据的时候，会给表加写锁！如果你是线上数据恢复的话，那用户不就不能访问了吗！为了解决这个问题，就要用innobackupex这个第三方软件！
+
+	二、实时增量备份与恢复（binlog日志）
+		1.binlog日志介绍：是mysql日志文件的一种，是一种2进制文件，记录在服务器上执行的，除了查询之外的sql命令！
+					查询命令包括：select show desc 
+		2.启用binlog日志：
+			我们可以先查下，binlog日志是否启动了：show master status;
+			想要启用binlog日志，必须去改配置文件：vim /etc/my.cnf
+			在[mysql]里写入：			
+				server_id=50  	#这一行是指定主机编号，其实可以随便写1～255，但是不能和别的数据库服务器重复！
+				log_bin 	  	#这一行就是开启binlog								
+			然后重启一下服务
+			日志文件存放在/var/log/mysql下，名称是 主机名_bin.000001  这个就是第一个日志文件，如果容量超过了，它会自动生成新的日志文件
+			5.7版本以前，binlog日志文件的容量是500M，现在5.7及以后的是1G的容量
+			主机名-bin.index是记录当前目录下有的日志文件名称的
+			可以自定义日志文件存放的路径：
+				将bin-log注释掉，然后重新写bin-log=指定路径
+				然后还要给这个指定目录设置权限！chown mysql：mysql 指定目录	
+		3.删除已有的binlog日志文件：
+			删除早于指定版本的binlog日志：purge master logs to "binlog日志文件名";
+			删除所有binlog日志，重建新日志：reset master;	
+			当然索引文件index也会跟着变更！
+		4.手动创建新的binlog日志文件：
+			当你重新启动一下服务器，系统就会自动生成一个新的binlog日志文件，它存日志的优先级根据的就是日志文件的编号，哪个编号大就往哪里存
+			或者你输入 flush logs; 也会自动生成新的日志文件
+			也可以在linux系统里输入mysql -u root -p'...' -e "flush logs"
+				只要我们不想把日志信息存到当前的日志文件里的时候，就可以创建新的日志文件
+			
+			这里补充一个知识点：我们在数据库里，可用system+linux系统命令，来实现在数据库里操作系统
+					我们也可以在liunx系统里输入mysql -u root -p'...' -e "操作数据库相关的命令" ，来实现在系统里操作数据库！
+		5.查看日志内容
+			怎么查看binlog日志的存储格式：show  variables like  "binlog_format"; //查看日志格式
+			
+			binlog日志格式：默认它是行模式row，除了行模式，还有statement、mixed
+				row：不记录sql语句命令，仅记录哪条数据被修改了，被改成什么样了！所以当你有大量修改的时候，binlog日志文件会写很多数据！
+				statement:每一条修改数据的sql命令都会记录在binlog日志中!只记你敲过的命令，而不会记修改后数据变成什么样！这样省磁盘空间，
+					     但是有可能会导致主从（msater salve）数据不一致！
+				mixed：是以上两种格式的混合使用
+			生产环境中，如果你使用（存储过程、触发器、函数）这些特殊功能比较少的话，建议使用statement，如果使用的特殊功能多，使用mixed模式，如果使用的特殊命令多，
+		又希望数据可以最大化的一致，就使用row模式，但是会比较费空间！所以建议使用mixed模式！
+			
+			日志文件如何区分记录的多条sql命令（利用偏移量和时间来区分）：
+				查看日志文件的命令：mysqlbinlog 日志文件名；
+				查看binlog日志文件内容：在linux系统里输入 
+					mysqlbinlog 日志文件的绝对路径  
+					虽然它输出到屏幕上很多信息，但是其实就是提取 更改数据库数据的命令！这个输出内容是可以直接用于写脚本的！  
+				显示内容如下：
+					#at 154	     这里就是偏移量的起始点
+					#190220 19:49:30 server id 50  end_log_pos 154      最前面是时间
+					BINLOG '
+					yj5tXBMyAAAALgAAAPgBAAAAAHgAAAAAAAEAA2RiMQACdDEAAf4C/goBM07j2w==      这里是发生的数据变化，人看不懂，是因为是row模式
+					yj5tXB4yAAAAKAAAACACAAAAAHgAAAAAAAEAAgAB//4DYWFhQkw9lg==
+					#190220 19:49:30 server id 50  end_log_pos 330      也是下一个数据变化的起始点，最前面是时间
+					#at 330  		这里是偏移量的结束点
+				
+				其中偏移量（postion）：就是用来记录，数据发生了多少变化！默认起始骗移量是154！所记录的更改的命令人类看不懂！
+				时间点 ： 命令执行的开始时间 和命令执行后的结束时间，每一个偏移量都会对应一个时间！
+				
+				我们现在不是看不懂日志文件的数据变化吗，把存储模式改称mixed模式就可以了：
+					vim /etc/my.cnf
+					在[mysqld] 里面写入
+					binlog_format="mixed"
+					然后重启下服务
+				现在我们可以验证下：
+				 	修改表记录或者结构，就用insert 插入一些表记录吧，然后：
+					mysqlbinlog 日志文件的绝对路径 | grep insert   就可以非常清晰的筛选出所有发生insert相关操作的！人可读的信息了！
+	提示：如果出现.performance_schema session_variables问题 就去linux系统里输入mysql_upgrade 命令。
+
+		6.使用日志文件恢复数据
+		命令格式：
+			mysqlbinlog 选项 binlog日志文件名称
+		选项的详细解释：
+			我们正常读的不是整个日志的内容吗，并把结果输出到了屏幕上，我们应该通过选项，来输出指定的内容，
+			就像 | grep 查出来的insert相关数据的命令！选项就是和 | grep筛选一样，圈定范围！来将指定更改数据的命令输出到屏幕上
+		常用选项：就是利用偏移量或者起止时间，来划定更改数据命令出现的范围！
+			--start-datetime="yyyy-mm-dd hh:mm:mm"
+			--stop-datetime="yyyy-mm-dd hh:mm:mm"
+			--start-postion=偏移量数字
+			--stop-postion=偏移量数字
+		然后我们就可以指定范围选项可以单写一个，也可以写俩来指定起止范围！（没指定结束，就一直到结束，没指定开始，就从最开始！）再交给grep筛选了！
+			例如：mysqlbinlog --start-datetime="yyyy-mm-dd hh:mm:mm" --stop-datetime="yyyy-mm-dd hh:mm:mm" 日志文件的绝对路径
+
+		那么我们就将50上的这个binlog日志文件scp拷给51服务器，然后进入到51服务器上，51服务器上操作（比如这个文件叫server51-bin.000001在root下）：
+			mysqlbinlog /root/server51-bin.000001 | mysql -u root -p'...'   
+			#我们没有指定范围！就是把日志文件里记录的所有命令都交给root处理，这不就是非交互的登陆数据库吗，然后在数据库里操作这些指令吗。
+			
+			再做个指定范围的例子：
+			mysqlbinlog --start-postion=154 --stop-postion=328 /root/server51-bin.000001 | mysql -u root -p'...'
+			#这样它就只会将 偏移量154到328这个范围里的命令 给数据库处理！
+		
+			但是讲道理，我们之前做过一次完全备份，所以这个binlog日志里的所有命令就相当于全新的命令！千万不要反复的拿一个日志文件做数据备份！
+			因为你有的表记录都是已经写过的，如果有字段是主键，那就直接运行失败了，不可能让你写入重复的值！所以，每次拿51给50做数据备份的时候，
+			一定要非常清晰的知道，上一次数据备份的结束点是在哪里，如果你每次都按整个binlog日志备份，那就不叫增量备份了！			
+			以上这些操作！就是增量备份！！！！！！！
+		关于自动化的增量备份：
+			1.先手动给51服务器做一下50的完全备份，并让51服务器上，始终有最新变化的日志记录
+			/bin/bash
+				for i in $(ls /var/lib/mysql/localhost-bin.0*)
+				do
+				mysqlbinlog $i >> /opt/1.txt #这里面写的是完整的日志内容，而不是单纯的变化命令！
+				scp $i root@172.25.4.51:/var/lib/mysql  #前提我们输入过密码，连接过51！
+				expect << EOF
+					spawn ssh root@172.25.4.51
+					expect "password:" {send "456\r"}
+					expect "#" {send "mysqlbinlog --start-postion=154 $i | mysql -u root -p'123456'"\r}
+					expect "#" {send "rm -rf $i"\r}
+					expect "#" {send "exit\r"}
+					EOF	
+				done
+				tar -zcf /opt/1/$(date +%F).tar.gz /opt/1.txt 
+				scp /opt/1/$(date +%F).gz root@172.25.4.51
+				mysql -u root -p'123456' -e "reset master;"  
+			再将这个脚本写到日志计划里crontab -e	
+		这里补充一个知识点：这里是binlog日志文件内容
+			# at 293
+			#190220 20:26:20 server id 50  end_log_pos 395 CRC32 0xa50b6ef5         Query   thread_id=5     exec_time=0     error_code=0
+			SET TIMESTAMP=1550665580/*!*/;
+			insert into db1.t1 values("aaaa")
+			/*!*/;
+			# at 395
+			#190220 20:26:20 server id 50  end_log_pos 426 CRC32 0x2688521a         Xid = 10
+			COMMIT/*!*/;
+			# at 426
+		我们想执行insert into db1.t1 values("aaaa")  这条命令！那么结束点的偏移量应该是426，因为到395并没有COMMIT/*!*/;这条指令，这条指令不是提交的意思嘛！
+
+		而且binlog也可以做差异备份的，就是基于完全备份新产生的所有数据进行备份，那就是从154偏移量一直备份到最后，备份完一个，再备份下一个binlog日志文件，以此类推！
+
+	三、安装第三方软件做数据备份与恢复（innobackupex），这个软件给提供linux命令行！
+			我们是在50服务器上，给50服务器自己做备份与恢复！
+		需要的软件包：
+			Percona-XtraBackup-2.4.6-r8ec05b7-el7-x86_64.bundle.tar
+			libev-4.15-1.el6.rf.x86_64.rpm
+		软件介绍：
+			是percona公司做的，是一个开源软件，是一个强大的，热备份服务软件，也就是服务运行时就可以执行备份操作
+			备份过程中不做表锁，只做行锁，适合生产环境
+			主要含两个组件：
+				xtrabackup： c程序 使用这个组件的命令 只支持innoDB/xtraDB 这两种数据库引擎！	
+				innobackupex：是以per脚本封装的xtrabackup，使用这个组件的命令，即可以支持innoDB/myisam两种引擎，
+						 但是如果是myisam引擎，即使你做增量备份操作，它也只会做完全备份，所以建表时一定要选择innodb引擎！
+						 如果之前的实验，我们在配置文件中写了指定myisam为默认存储引擎，一定要改过来！
+		安装软件：
+			将这个Percona-XtraBackup-2.4.6-r8ec05b7-el7-x86_64.bundle.tar解压
+			然后cd进解压的目录里，先装rpm -ivh libev-4.15-1.el6.rf.x86_64.rpm
+						再yum -y install percona-XtraBackup-*
+			然后我们可以查看innobackupex的帮助手册：
+				man innobackupex
+		命令格式：
+			innobackupex 加选项
+			备份时选项的释义：
+				--databases ：指定备份数据库名，如果不写这个选项就是把所有库，所有表全备份！
+				--host：指定登陆的数据库服务主机名
+				--user：指定登陆的数据库服务用户名
+				--port：指定登陆的数据库服务端口号，不指定默认去找3306
+				--password：指定登陆数据库服务密码
+				--no-timestamp：不用日期命名备份文件存储的子目录名
+					例：
+					innobackupex --user root --password 123 --databases="a"  /opt/a
+					#这就是备份a库，存储到/opt/a目录下了，并且会以系统时间命名这被备份的库目录名，这个a目录如果没创建，这个命令也会自动创建！
+					#每次备份，都会分成两个部分，一部分是备份的数据，一部分是innobacakupex备份操作的配置信息
+					innobackupex --user root --password 123 --databases="库1 库2"  
+					#这是备份多个库
+					innobackupex --user root --password 123 --databases="库名.表名"	 
+					#这是备份指定表	
+			恢复时的选项释义：
+				--redo-only  #数据合并
+				--apply-log  #准备还原（回滚日志）
+				--copy-back  #恢复数据
+				--incremental 目录名	#增量备份
+				--incremental-basedir=目录名   #指定上一次备份数据存储的目录名
+				--incremental-dir=目录名  #指定增量备份的目录
+				--export 导出表信息
+				--import 导出表空间
+		数据备份与恢复 用innobackupex命令：
+			1.完全备份
+				前提！！！一定要把系统库一起备份！！！
+				它做数据恢复的时候！会要求你mysql下的目录是空的！也就是说你如果只备份了一个指定库，那innobackupex恢复数据的时候，就只会恢复一个库的数据
+				所以如果你要是有需求的时候，只想备份一个数据库的时候，一定要把3个系统库(mysql\performance_schema\sys)一起备份！
+				所以讲道理，最好都是把所有的库都备份
+				innobackupex --user root --password 123 /opt/aa
+					#这个不指定库，就是备份所有库！
+				innobackupex --user root --password 123 --databases="a mysql performance_schema sys"  /opt/a
+					#这就是备份a库及3个系统库，存储到/opt/a目录下了，并且会以系统时间命名这被备份的库目录名，这个a目录如果没创建，这个命令也会自动创建！
+					#每次做备份，它都会要求你的目录必须是空目录！所以干脆就别创建目录，让它创建
+					#每次备份，都会分成两个部分，一部分是备份的数据，一部分是innobacakupex备份操作的配置信息
+				如果我想每天自动做全备份，可以写corn计划任务：
+					crontab -e
+					0 0 * * * innobackupex --user root --password 123 /opt/$(date)
+			2.完全恢复
+				恢复的命令及步骤：这是给50自己备份，给50自己恢复！
+					1）先要将数据库服务停掉！systemctl stop mysqld
+					   再将数据库mysql目录里的内容清空！rm -rf /var/lib/mysql/*
+					2）先整理：innobackupex --apply-log /opt/a
+					3）再拷贝：innobackupex --copy-back /opt/a #它会自动将这个目录下的所有内容拷贝到mysql下
+					4）但是我们是以系统里的root拷贝的，所以这些内容的所有者和所属组都是root，我们还要改称mysql才行！
+						chown -R mysql:mysql /var/lib/mysql
+					5）然后再重启数据库服务！
+					6）然后你就可以用原来的mysql用户的帐号密码登陆验证了！
+					
+					
+	
+				你做数据恢复的时候，可能会碰到这样一个情况，比如你有3张表abc,当你把a表备份完的时候，正在备份b时，可能有客户会往a表里又插入记录了，
+				那这时你这个备份就不是最新的了，为了解决这个问题/var/lib/mysql下，有两种事务日志！
+				ib_logfile类型日志记录的是已经提交的命令，ibdata记录的是还没有commit的命令数据！
+				相对的innobackupex这个软件也是这样的构造，我们可以去看备份到的目录里都有什么ls /opt/a
+				有xtrabackup_logfile这个是记录已经提交执行的数据！ibdata这个文件里记录的是还没提交执行的数据！
+				--apply-log 这个选项的功能就是把这/opt下的两种事务日志做整理（xtrabackup_logfile和ibdata）！
+				
+				我们再看看备份目录里的其它文件 ls /opt/a 其中有个xtrabackup_checkpoints文件
+				我们看看这个文件写了什么，cat /opt/a/xtrabackup_checkpoints
+						backup_type = full-backuped   
+					#这个意思是做了哪种类型的备份，这是全备份，但是如果我们做了整理操作--apply-log，这里会变成full-backuped，恢复完会变成full-prepared
+						from_lsn = 0		
+					#lsn是日志序列号，我们每做一个操作不是都会被记录在事务日志里吗，每一条操作命令都会被编一个序号，这里就是起始点
+						to_lsn = 2610766		
+					#这个就是说，我把/var/lib/mysql里的那两种类型的事务日志里从0到2610766这个范围编号的日志命令备份
+					#放到innobackupex做的备份目录里两种类型文件里，也就是/opt/a 里的xtrabackup_logfile和ibdata
+						last_lsn = 2610775
+					#这个就是以后/opt/a/里的xtrabackup_logfile和ibdata 它自己再做命令编号备份时就从2610775这个数字开始！
+					也就是说你把这个备份目录做数据恢复以前，以前的mysql下的内容不是被清空了吗，那这个备份目录就是做新mysql目录了，它得知道从哪里给命令排编号啊！
+						compact = 0
+						recover_binlog_info = 0
+					
+				以上是50自己备份给自己做恢复，现在，我们要把50备份的目录拷贝给51服务器，让51做一份克隆！
+					1）scp /opt/a root@172.25.4.51:/
+					2) 51服务器上也要innobackupex这个软件！
+					3）停止mysqld服务！并清空mysql目录内容
+					4）我们这个拷贝的a这个目录已经做完了innobackupex --apply-log /opt/a 整理工作，所以可以不写，如果没整理，还是要整理的
+					5）现在就可以直接进行数据恢复了！innobackupex --copy-back /a
+					6）然后要改权限！chown -R mysql:mysql /var/lib/mysql
+					7）然后就ok了
+			2.数据增量备份与恢复
+				增量备份：是备份上次备份之后，新增的数据备份！
+				例如周一做完全备份，周二到周日都做增量备份。
+				我们以上面的完全备份目录为基础，然后还是在50服务器上做！
+				
+				增量备份的命令：
+					innobackupex -user root -password 123 --incremental /opt/new1 --incremental-basedir=目录名
+					#我要开始备份了，先指定连接数据库的用户名和密码，然后指定增量备份的数据存放目录是/opt/new1，这个目录不用建，然后指定上一次备份过的目录名
+				
+				增量备份的步骤：
+					1）我们先去数据库里插入记录，这不就产生增量了吗：
+						insert into db1 values(2222),(33333),(44444);
+					2）innobackupex -user root -password 123 --incremental /opt/new1 --incremental-basedir=/opt/a
+						#这个时候new1里面就是新增的变化数据了！我们可以cat /opt/new1/xtrabackup_checkpoints这个文件看看效果
+						backup_type = incremental
+						from_lsn = 2610766  #这就是之前完全备份那个xtrabackup_checkpoints记录的to_lsn = 2610766结束点！
+						to_lsn = 3088447 #这个就是说，我把/var/lib/mysql里的那两种类型的事务日志里从2610775到3088447这个范围编号的日志命令备份
+						last_lsn = 3089955 
+						compact = 0
+						recover_binlog_info = 0
+					3）你做增量备份之后，文件后缀也变了，就像之前完全备份的前缀是xtra是的，它的后缀变成了.delta
+					4）你周三再做增量备份：
+				     innobackupex -user root -password 123 --incremental /opt/$（date %w） --incremental-basedir=/opt/$(expr `date +%w` - 1) 
+					以此类推....
+					如果我们想编写增量备份的脚本，就可以利用$(date +%w)这个就是显示周几。来实现自动改名，自动引用之前备份目录名的名称！
+				增量备份的恢复步骤：	
+					   比如我们第一天做了完全备份，第二天做了增量备份，第三天做了增量备份，那么我恢复数据的时候，应该恢复的是这三天的数据！
+					1）先把数据库服务停了，并且把/var/lib/mysql里的内容清空
+					2）然后将几个增量备份目录内容和完全备份内容做合并到/opt/1里：
+						innobackupex --apply-log --redo-only /opt/1
+						innobackupex --apply-log --redo-only /opt/1 --increamental-dir=/opt/2
+						innobackupex --apply-log --redo-only /opt/1 --increamental-dir=/opt/3
+					#1是完全备份的目录，23是增量备份的目录，--redo-only是数据合并，--incremental-dir=/opt/2是指定增量备份的目录，
+					所有的备份数据的目录内容，全部都被整合到/opt/1里面了！然后可以看下/opt/1里面的xtrabackup_checkpoints内容
+						backup_type = log-applied 因为数据整合就变成了这个状态
+						from_lsn = 0     
+						to_lsn = 4055995   #这两行就代表着完全备份的命令编号和两个增量备份命令的总范围！
+						last_lsn = 4060995
+						compact = 0
+						recover_binlog_info = 0
+					3）/opt/1 /opt/2 就没用了，就可以删除了
+					4）拷贝这个整合后的目录,到/var/lib/mysql下即可：
+						innobackupex --copy-back /opt/1
+						#就会自动将其备份目录里的内容拷贝到/var/lib/mysql下了
+					5）然后改权限再启动服务：
+						chown -R /var/lib/mysql
+						systemctl restart mysqld
+
+				差异备份步骤：不管什么时候备份，上一次备份都是基于完全备份的目录，所以每次备份系统都是从from_lsn = 2610766开始备份  
+				好比这是周一：	innobackupex -user root -password 123 --incremental /opt/chayi1 --incremental-basedir=/opt/a
+				这是周二：	innobackupex -user root -password 123 --incremental /opt/chayi2 --incremental-basedir=/opt/a
+				恢复的步骤完全同上！
+
+				这不是50上自己备份自己恢复吗，还可以给51传一份，让51变成50的数据库克隆体！
+					50把备份文件拷贝给51
+					51停止服务，把目录清了
+					....
+					可以用脚本.....来实现所有的要求，太简单就不写了
+
+			3.从完全备份文件里恢复单张表
+				比如我们不小心对某个库里的单张表误操作了，但是这时候不能删所有mysql内容重新恢复吧，太麻烦了，只要恢复一个库里的单张表的表记录就行了！
+				前提是我们做过完全备份，可以找到这张表在备份目录里的哪！
+				但是我们不会用这个库恢复整个mysql，因为你要是恢复这个库，它会要求你mysql目录是空的！
+				
+				备份步骤：
+				1）我们先把指定库备份到一个空目录里（生产环境里我们是做的完全备份）：
+					innobackupex --user root password 123 --databases="db5" /opt/aaaa
+				2）假如我们把有用的表误删除了，那么这时候，我们需要重新建一张被删除的原名表，要求表结构和原删除的表相同，且要把建的这张表空间（.ibd文件）全部清空！
+					create table db5.a1（...）;   
+					至于表结构啥样，我们就得去问他们开发人员要了，他们在建表的时候，一定会对表结构做记录的！
+					你直接cp .frm那个文件到51服务器上，是不行的！因为在50创建表时的那些命令，都是做过sln编号的！
+				   删除这张表空间的操作命令：
+					在mysql命令行里输入：alter table db5.a1 discard tablespace;
+					#执行这条命令，会将表的.ibd文件删除，只留下.frm文件
+				3）然后在备份数据里导出表记录信息：
+					我们创建的这张空表所产生相关的文件：ls /var/lib/mysql/a1.*
+					会看到.frm 和.ibd 这俩类型的文件，.frm是用来存表结构信息的，.ibd是用来存索引信息的，以及表记录的文件（存储引擎篇详细说过），
+					不过刚才已经将idb删除了
+					innobackupex --user root --password 123 --databases="db5" --aply-log --export /opt/aaaa
+					#这条命令是指定db5这个库，这个db5库的备份信息是在/opt/aaaa这个库的备份目录里，将其数据进行整理，并db5库的信息导出
+					然后我们去看这个db5库的备份目录：ls /opt/aaaa 会发现每个表的信息都会多出.cfg .exp这俩类型的文件，这就是导出的信息！		
+				4）将导出的信息文件，拷贝到原来的库下：
+					cp /opt/aaaa/db5/a1.{cfg,exp,ibd} /var/lib/mysql/db5 
+					#将这3个文件拷贝到mysql/db5下面，这样就把表记录导入到我们创建的空表里了
+					#.cfg .exp这俩文件是配置文件，里面是日志信息，以及sln编码，没有这俩文件，你直接拷贝ibd，系统压根就不读idb！					
+				5）修改刚才拷贝的文件它的所有者和所属组用户为mysql
+					chown -R mysql:mysql /var/lib/mysql/db5
+				6）导入表信息
+				 	然后将表信息导入到数据库对应的表里面，在mysql里执行
+					alter table db5.aaaa import tablespace;
+					然后.cfg .exp这两个文件就没用了，就可以删除了，以便下次做数据恢复
+					rm -rf /var/lib/mysql/b.{exp,cfg}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

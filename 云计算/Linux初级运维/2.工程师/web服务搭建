@@ -1,0 +1,112 @@
+web通信基本概念：服务端提供网页，浏览器下载并显示网页
+web（Apache）服务搭建：
+	1.检查防火墙是否是trusted模式
+	2.安装相关软件包：
+		yum -y install httpd
+	3.配置文件的关键词：
+	/etc/httpd/conf/httpd.conf 是软件的主配置文件 
+	/etc/httpd/conf.d/*.conf 是辅助主配置文件的调用文件，可以一个网站写一个文件
+	/var/www/* 是存放网页的路径，默认是 /var/www/html ，也可以自定义	
+		Listen ：80
+		#Listen是监听本机哪个IP地址用于http服务，不写默认是使用本机所有IP 80是用于开放http服务的端口
+		servername：www.aaa.com
+		#指定本服务器的主机名称与域名，www是管理员随便起的主机名，aaa.com是花钱注册的域名
+		DocumentRoot：/var/www/html
+		#指定存放网页的根目录，对于一个网站来说 http：//www.aaa.com/var/www/html 这个路径叫做 / 路径
+		DirectoryIndex：index.html
+		#网站起始页的文件名，这个文件存放于/var/www/html网站根木录下 
+实验：设置网页文件存放的根目录
+	1.修改主配置文件vim /etc/httpd/conf/httpd.conf
+		DocumentRoot：/var/www/myweb
+	2.创建myweb目录，并在里面新建个网页
+		mkdir /var/www/myweb
+		echo '123' > /var/www/myweb/index.html
+	3.重启服务，开机自启
+		systemctl restart httpd
+		systemctl enable httpd
+	关于网络路径和实际路径：如果服务器的IP地址是172.25.0.11
+		客户访问http://172.25.0.11/nsd，就相当于访问的是服务器的/var/www/myweb/nsd
+		例：在/var/www/myweb下新建个nsd目录，并在nsd目录里写一个网页index.html，然后客户访问172.25.0.11/nsd看到的就是index.html网页内容
+实验：由一个服务器，提供多个不同的web站点
+	有3种构筑方式：
+		基于域名的虚拟主机
+		基于端口的虚拟主机（不常用）
+		基于IP地址的虚拟主机（不常用）	
+	提示：
+		可以自己创建调用文件 /etc/httpd/conf.d/a.conf 
+		主配置文件中有一句：IncludeOptional conf.d/*.conf 意思就是指定调用文件位置
+		且网页文件必须叫index.html，调用文件必须以.conf结尾，主配置文件规定网站根目录必须创建在/var/www 下
+	在调用文件里，建立多个虚拟站点,一旦启用调用文件，主配置文件里的网站就会失效，而其它配置不会失效
+		建立多个不同域名的虚拟主机：
+			vim /etc/httpd/conf.d/a.conf
+				<VirtualHost *:80>  #网站的开头 *是指开放本机所有ip用与http服务，并指定80端口用于http服务
+				ServerName www.example.com  #指定用户访问的域名
+				DocumentRoot /var/www/baidu  #指定网页存放的根目录
+				</VirtualHost>  #网站的结尾
+			//第二个网站
+				<VirtualHost *:80>  
+				ServerName www.qq.com  #指定用户访问的域名
+				DocumentRoot /var/www/qq  #指定网页存放的根目录
+				</VirtualHost>  #网站的结尾
+httpd服务的运行身份：为了保障服务器系统的安全，访问web网站的用户，是以apache这个用户访问/var/www/html，这个用户是下载httpd软件时，软件包的脚本自动创建的/sbin/nologin用户
+客户机地址限制：使用新建的调用文件写配置，每个文件夹自动继承其父目录的acl权限，除非对子目录有明确的设置。
+		vim /etc/httpd/conf.d/a.conf
+		第一种：
+			<Directory 网站根目录>  #可以用正则表达式，来指出明确的文件夹范围
+			Require all denied #拒绝所有用户访问
+			</Directory>
+		第二种：
+			<Directory /var/www/html>
+			Require all granted #允许所有用户访问，默认主配置文件已经写了/var/www下的目录允许所有用户访问，所以不写也可以
+			</Directory>
+		第三种：
+			<Directory 网站根目录> 
+			Require  单个IP或网段  #允许单个IP，或网段的用户访问
+			</Directory>
+关于网站的根目录：SELinux限制了apache网站软件的网站根目录，它对/var/www这个目录做了安全上下文的标签httpd
+	如何赋予除/var/www目录以外的其它目录拥有作为网站根目录的权限：
+		1.vim /etc/httpd/conf.d/a.conf
+			<VirtualHost *:80>  
+			ServerName www.ccc.com  #指定一个新域名
+			DocumentRoot /nsd       #指定新的网站根目录
+			</VirtualHost>  
+		
+			<Directory /nsd>  #然后必须要给这个目录赋予允许访问权限，因为主配置文件里默认给/var/www赋予了，所以不用设置罢了
+			Require all granted 
+			</Directory>
+		2.修改SELinux的安全上下文策略：
+			chcon  [-R]  --reference=/var/www  /nsd  #以/var/www为模版目录，赋予nsd与模版目录一致的上下文标签
+		3.重启服务：systemctl restart httpd
+关于静态网站和动态网站：
+	静态网站：服务端的原始页，原封不动的呈现给客户端，就是静态网站，完全交由web软件自己处理。
+	动态网站：由web软件接受用户访问请求，再由后端的解释器将网页翻译完，再交给用户，也就是PHP Python JSP Java等语言写的网页。
+
+	署动态apache网站：为站点www.ccc.com提供动态网页
+		1.cd到其网站根目录里的一个子目录，在这里面放动态网页，客户访问时指定这个子目录位置即可，也可以在调用文件里指定根目录的起始页网页，都行
+		然后下载动态网页：wget 动态网页素材的url , 这个动态网页叫webinfo.wsgi
+		2.安装解释器，用于翻译这个动态网页，否则用户看到的是源代码：
+			yum -y install mod_wsgi #不同的语言写的网页，解释器不同，该软件是用来翻译Python的
+		3.修改调用配置文件：vim /etc/httpd/conf.d/a.conf
+		写入：
+			Listen  8909 #可以单独设置开放个端口，也可以继续写80，都行，此操作会消耗很大内存，工作环境不建议这样另外开端口
+			<VirtualHost *:8909>
+        		DocumentRoot  /nsd/a
+        		ServerName  www.ccc.com
+        		WSGIScriptAlias  /  /nsd/b/webinfo.wsgi 
+		 	#Alias（地址重写）是将网站根目录下的网页定义成/nsd/b/webinfo.wsgi，之前原网站根目录是/nsd/a底下的网页 ； WSGIScript是将这个网页用python解释器翻译的意思。
+			之所以做地址重写，是因为用户无法更改操作习惯，我们网站目录变更了，不能让客户有感知，因为客户不可能去在指定域名后面，再指定目录。
+			</VirtualHost>					
+		4.将SELinux的非默认端口开放：
+			SELinux有三策略：
+				布尔值
+				安全上下文
+				非默认端口的开放
+			查看当前http服务可以使用的端口号：
+				semanage  port  -l  |  grep  ^http_port
+			添加新的用于http服务的端口号：
+				semanage  port  -a  -t  http_port_t  -p  tcp  8909
+		5.重启http服务查看效果：
+			systemctl  restart  httpd
+		客户端访问http://www.ccc.com:8909 #因为这个网页提供服务的默认端口改成8909了，所以客户访问必须指定端口号：8909了
+	
+	

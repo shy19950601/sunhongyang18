@@ -1,0 +1,393 @@
+实验准备：
+	！！！我们需要5台干净的服务器！！！
+	服务器57 client 	充当客户端		需要mysql		ip是192.168.4.254/24
+	服务器58 mycat 	充当mycat服务器	不需要mysql		ip是192.168.4.56/24
+	服务器59 c1 		充当数据库服务器	建一个库叫db1		ip是192.168.4.55/24
+	服务器60 c2 		充当数据库服务器   	建一个库叫db2		ip是192.168.4.54/24
+	服务器61 c3 		充当数据库服务器   	建一个库叫db3		ip是192.168.4.53/24
+	然后把mycat的软件包（Mycat-server-1.6-RELEASE-20161028204710-linux.tar.gz）传给58这台服务器！
+	后台这些数据库服务器，都是最干净的！彼此之间是独立的！
+数据分片：
+	也叫分库分表，将存放在一个数据库主机中的数据，按照特定的方式进行拆分，分散存放在多个数据库主机里，以达到分散单台设备负载的效果
+	有什么方式可以拆分数据？
+		垂直分割：
+			将单个表，拆分成多个表，分散到不同的数据库，将单个数据库的多个表进行分类，按业务类别分散到不同的数据库上
+			就比如我有商品表、用户表、销售表，我可以把每张表存放到不同的服务器上！
+		水平分割：
+			按照表中某个字段的某种规则，把表中的许多记录按行切分，分散到多个数据库中！
+			就比如说我有3台服务器，每台服务器里都有一张用户表，而我的用户数据可能有100万行，我们可以让第一台存1-30万行的数据，第二台30万01-60万行，第三台60万01-100万行这样
+			而我们想做分库分表的分割操作的话，就需要mycat这个软件！
+		mycat软件介绍：
+			mycat是基于java的分布式数据库系统中间件，为高并发环境的分布式访问提供解决方案！
+			我们要想使用mycat需要有JDK，也就是java解释器
+			什么叫分布式？就是把本来应该存放在一台服务器的数据分开存！装这个mycat软件的服务器，就相当于代理服务器！
+		mycat支持的功能：
+			支持JDBC形式连接		
+			支持mysql、oracle、sqlserver、mongodb等
+			提供数据读写分离服务
+			可以实现数据库服务器的高可用
+			提供数据分片服务，我们可以把其他支持的功能关了，单开这一个功能
+			基于阿里巴巴cobar进行研发的开源软件
+			适合大量写入数据的存储需求，但是查起来比较慢
+		mycat支持提供的10种分片规则：
+			1枚举法sharding-by-intfile  
+			2固定分片rule1 
+			3范围约定auto-sharding-long 
+			4求模法mod-long 
+			5日期列分区法sharding-by-date 
+			6通配取模sharding-by-pattern 
+			7ascll码求模通配sharding-by-prefixpattern 
+			8编程指定sharding-by-substring 
+			9字符串拆分hash解析sharding-by-stringhash 
+			10一致性hash sharding-by-murmur
+		服务工作过程:
+			58是mycat代理服务器，58上面没有mysql，59 60 61这三台服务器是真正的后台负责存储的数据库服务器
+			当50这台客户端来访问58这台分片代理服务器的时候，假如它发送的是sql查询请求，58会先解析这个sql查询所涉及到的表，看此表的定义，如果有分片规则，则获取sql语句里的分片字段的值，并匹配分片函数，通过这些信息，来判断数据应该交给后台哪台服务器处理，然后将sql语句发往对应的后台数据库服务器处理，58将找到的结果先进行整理再传给客户端50！如果是存储请求的话，也是一样的，通过寻找对应的分片规则等来判断，数据应该交给哪台后台数据库服务器处理。
+
+		配置数据分片服务器58：
+			安装JDK，系统自带的即可，默认系统里就装了，也就是java工具包。因为mycat用java写的
+				可以用java-version命令来查看一下java工具包的版本
+			安装mycat服务软件包，也就是在真机那边传过来的
+				tar -xf Mycat-server-1.6-RELEASE-20161028204710-linux.tar.gz 	解压到当前目录后就可以直接使用了，不用安装.	
+			mycat软件的所有程序都在 mycat/ 里面，我们要把这个目录移动到 /usr/local下：
+				mv mycat /usr/local/
+			关于mycat软件里面的目录结构说明：
+				bin 			#存放mycat软件的管理命令
+				catlet 		#扩展功能，默认是空的
+				conf 			#所有的配置文件存放的目录
+				lib 			#mycat使用的库文件，也就是存放的脚本，我们不能动
+				log 			#mycat的启动日志文件和运行日志文件
+				wrapper.log 	#mycat服务启动日志
+				mycat.log 		#记录sql脚本执行后的报错内容
+				version.txt 	#版本介绍
+			我们查看一下 ls /usr/local/mycat/bin 这里面放的都是mycat软件的管理命令，我们以后要输入mycat的管理命令，就得输入完整路径
+				/usr/local/mycat/bin/...
+			重要配置文件说明：
+				server.xml	#设置连接mycat分片代理服务器的账号信息，以及对应账号所访问的库
+				schema.xml	#配置mycat的后台真正用于存储的数据库服务器
+				rule.xml	#定义mycat分片规则，10种分片规则都在这里
+			修改配置文件：
+				1.定义客户端连接mycat服务器使用的账户信息及数据库名和权限
+				修改前，应该拷贝一份，以防无法恢复cp /usr/local/mycat/conf/server.xml /usr/local/mycat/conf/server.xmlbeiyong
+					vim /usr/local/mycat/conf/server.xml 里面的配置都是 <mycat 选项=值> </mycat> 这样的写法，这种写法叫标记语言。
+						<user name="test">	#账户名设置位置
+						<property name="password">123456</property>        
+							#使用test用户连接mycat用户时使用的密码是123456
+                				<property name="schemas">TESTDB</property>    
+							#连接上mycat服务后，可以看到的库名多个时，使用逗号分隔 （是逻辑上的库名,58服务器上没有这个库名，是后台数据库服务器里的库名）
+						</user>	
+					
+						<user name="user">
+                				<property name="password">user</property>
+               				<property name="schemas">TESTDB</property>
+                				<property name="readOnly">true</property>        
+							#定义只读权限，使用定义的user用户连接mycat服务后，对TESTDB库只有读记录的权限,不写这一行则是可读可写
+        					</user>	
+				2.配置数据分片服务器：
+					为了让文件看起来整洁些，把过多的功能清除掉，只留分片功能
+						sed -i '56,77d' /usr/local/mycat/conf/schema.xml
+						sed -i '39,42d' /usr/local/mycat/conf/schema.xml	
+					vim /usr/local/mycat/conf/schema.xml  	里面的<! ... --> 全是注释
+
+						<schema name="TESTDB" checkSQLschema="false" sqlMaxLimit="100">
+							#这里的testdb对应的就是server.xml配置文件里写的用户能看到的库名，用户不管做什么操作之前，一定要use进这个库里面！
+							#做更改表的操作的时候，也不要写TESTDB这个库名，因为这个库是逻辑库，在三台数据库服务器上，它们的库名叫db1 db2 db3，
+							#你指定TESTDB库，后面的数据库服务器就该懵逼了
+
+						<table name="travelrecord" dataNode="dn1,dn2,dn3" rule="auto-sharding-long" />
+							#<table />这就是一张表,name=写得是testdb库里的表名，dataNode=写的是数据库服务器的名称，可以写多台
+							rule=写的是这些数据库服务器使用的分片规则,分片规则对应的文件是rule.xml，下面会细讲。
+
+						<table name="company" primaryKey="ID" type="global" dataNode="dn1,dn2,dn3" />
+							#叫company的这张表，它的主键是ID字段，它的类型是一张全局表，也就是说后台三台服务器都有这张表，所以就不用指定分片规则了
+							#客户往这个表里存数据时，三个后台数据库服务器都要执行操作，所以这个表在后台的三台服务器上是一模一样的，
+							#你要是指定了全局类型，就要把后台服务器名称写全，当然你不是全局类型的表，也可以把服务器写全，看你需求
+	
+				  		<table name="goods" primaryKey="ID" type="global" dataNode="dn1,dn2" />
+						<table name="hotnews" primaryKey="ID" autoIncrement="true" dataNode="dn1,dn2,dn3"
+							   rule="mod-long" />
+						<table name="employee" primaryKey="ID" dataNode="dn1,dn2"
+							   rule="sharding-by-intfile" />
+							#这个就是使用枚举法的表。要求这张表里必须要有一个主键ID字段，这个表的数据只有dn1和dn2存
+													
+						<dataNode name="dn1" dataHost="localhost1" database="db1" />
+        						#叫dn1的那台数据节点，它在mycat集群中的主机名叫localhost1，这个名字随便起，但是dn1对应的是上面表里设置的节点
+							#database="db1" 这是说，dn1那台节点服务器，用它数据库里的db1库来存储mycat代理分配的数据
+							#你有几台节点服务器，要写几行这样的话！
+
+						<dataHost name="localhost1" maxCon="1000" minCon="10" balance="0"
+                         		 writeType="0" dbType="mysql" dbDriver="native" switchType="1"  slaveThreshold="100">
+							#<dataHost 是用来告诉mycat软件，我上面定义的节点服务器，它的ip是什么！
+							#你有几个节点服务器，就得有几部分<dataHost></dataHost>
+							#name对应的是<dataNode />里的dataHost
+						<heartbeat>select user()</heartbeat>
+              				<writeHost host="hostM1" url="localhost:3306" user="root" password="123456">
+							#这个host应该是唯一的，就相当于编号
+							#这个url里的localhost应该改成dn1这台节点服务器的ip地址
+							#这个user，passwor是58连接节点数据库服务所需要的账号以及密码！节点服务器里要有对应的账户和密码
+                        			<readHost host="hostS2" url="192.168.1.200:3306" user="root" password="xxx" />
+							#<readHost /> 这句话是只读主机，也就是做读写分离的，我们没做，所以把它删除掉
+                				</writeHost>
+                				<writeHost host="hostS1" url="localhost:3316" user="root" password="123456" /> 
+                                   		#<writeHost  /> 这句话应该删除，一段就够用了
+      				  	</dataHost>
+						
+						然后还得再写两台节点得配置信息
+						<dataHost name="localhost2" maxCon="1000" minCon="10" balance="0"
+                         		 writeType="0" dbType="mysql" dbDriver="native" switchType="1"  slaveThreshold="100">
+						<heartbeat>select user()</heartbeat>
+              				<writeHost host="hostM2" url="192.168.4.60:3306" user="root" password="123456">
+                				</writeHost>
+      				  	</dataHost>
+							
+						<dataHost name="localhost3" maxCon="1000" minCon="10" balance="0"
+                         		 writeType="0" dbType="mysql" dbDriver="native" switchType="1"  slaveThreshold="100">
+						<heartbeat>select user()</heartbeat>
+              				<writeHost host="hostM3" url="192.168.4.61:3306" user="root" password="123456">
+                				</writeHost>
+      				  	</dataHost>
+
+						以上配置完成保存退出
+				现在要根据数据分片服务器的配置做相应的设置：
+					建库：我后台的三台节点服务器dn1 dn2 dn3，分别要有配置文件里写的库！db1 db2 db3					
+			        		59数据库上	create database db1;								
+			        		60上		create database db2;
+			        		61上		create database db3;
+					授权：我58要连这后台服务器的账号和密码，也要这3台服务器上都有！给所有权限！
+						59数据库上	grant all on *.* to  adminplj@"%"； 
+						60上		grant all on *.* to  adminplj@"%"；
+						61上		grant all on *.* to  adminplj@"%"；
+				3.启动mycat：
+					/usr/local/mycat/bin/mycat start #是启动
+					/usr/local/mycat/bin/mycat stop #停服务	
+					/usr/local/mycat/bin/mycat restart #重启服务
+					/usr/local/mycat/bin/mycat status #查看服务状态
+					启动之后就会有日志信息了/usr/local/mycat/logs
+				4.查看mycat服务信息
+					netstat -ntulp | grep :8066
+					ps -C java
+					如果你服务没起来就去看wrapper.log 	日志文件
+		测试服务配置
+			虽然58上面没有mysql但是客户连接58的命令却是
+				mysql -u用户名 -p密码 -h主机地址 -P 8066  	所用的账户名和密码是58的server.xml文件定义的！
+			根据schema.xml文件里定义的表<table />规则来创建相应的表，是由客户端57连接58代理主机然后自己创建的，以company表为例：
+				步骤如下：
+					mysql -u test -p 123456 -h 192.168.4.58 -P 8066
+					create table company(ID int primary key auto_increment,和其它额外字段前面的ID字段是必须要创建的); 
+					#客户端57在58代理上创建这些表的时候，其实在59 60 61这三台真实存储数据的服务器上已经建立了，因为这个company表是全局表
+					#由此可知，客户端创建的表应该是schema.xml里定义的表，要满足表规则，然后可以在其表规则基础上再添加别的规则！
+					#用户操作schema.xml里定义的表，58这台代理才能知道找后台哪台数据库服务器！
+
+现在来详细说一下分片规则，分片规则的配置文件是rule.xml，这里定义了每一种分片规则使用的算法：
+	以枚举法sharding-by-intfile为例：
+	<tableRule name="sharding-by-intfile">
+                <rule>
+                        <columns>sharding_id</columns>	
+				#它要求使用枚举分片规则的表，表中必须要有一个sharding_id字段，另外它schema.xml文件还要求这个表要有主键ID字段
+                        <algorithm>hash-int</algorithm>  
+				#枚举法使用的算法是hash-int
+                </rule>
+	</tableRule>
+
+	<function name="hash-int"	#这里定义了hash-int这种算法是怎么运算的
+                class="io.mycat.route.function.PartitionByFileMap">
+			#class=是说我使用这种算法，调用的程序应该是mycat中的哪个程序！
+                <property name="mapFile">partition-hash-int.txt</property> 	
+			#枚举法不就是给你一个范围，让你去选吗，partition-hash-int.txt这个文件就是记录范围的
+       </function>
+
+	我们来看一下partition-hash-int.txt这个文件vim /usr/local/mycat/conf/partition-hash-int.txt
+		10000=0 #这句话的意思是，当sharding_id这个字段的赋值是10000的时候，去把数据存到第一台数据库服务器dn1上
+		10010=1 #这句话的意思是，当sharding_id这个字段的赋值是10010的时候，去把数据存到第一台数据库服务器dn2上
+		默认只有这两台，如果我们有三台，这个枚举文件，还应该在加一行，修改完之后，应该重启mycat服务，当然如果我们schema.xml文件中没有写三台，就不要改这个文件了！
+		10020=2 
+	重启服务之后，客户端想要使用枚举法的这张表，应该做的操作：
+		1.首先连上58，创建<table name="employee" primaryKey="ID" dataNode="dn1,dn2"
+							   rule="sharding-by-intfile" />这里要求的employee表
+			create table employee(ID int primary key auto_increment,sharding-id enum(10000,10010));
+			#ID和sharding-id这俩字段是必须要有的，然后sharding-id这个字段设置成枚举类型字段，将partition-hash-int.txt里的枚举值写入！
+			然后你客户端57插入一个值测试：
+			insert into employee values(10000);    #一定不要写TESTDB这个库，一到要进入到这个TESTDB库里去做相关操作！  
+				自增长的那个字段值就不用写了，写sharding-id字段的值即可，这个数据就会被存储到60那台dn1服务器的db1库里了
+		以上是枚举法的详细说明。
+
+现在我们如果想要添加新表做数据分片怎么办：
+	1.我们要先把mycat服务停掉
+	2.vim /usr/local/mycat/conf/schema.xml
+		如果我们还是要用枚举法的分片规则，那么就复制一下schema.xml文件中emloyee那张表的配置规则即可，改一下表名叫haha吧，其他的有需求再说
+	3.客户端连接58，然后建一张haha表，根据配置文件的规则以及上面说的枚举算法规则
+		create table haha(ID int primary key auto_increment,sharding-id enum(10000,10010));   
+
+现在如果我们想添加新库配置数据分片存储怎么办：
+	1.先停掉mycat服务
+	2.vim /usr/local/mycat/conf/server.xml   #先修改客户能看到库
+		   	<user name="root">
+                <property name="password">123456</property>
+                <property name="schemas">TESTDB,bbsdb</property>   #改一下这行，比如我们想让用户多识别一个bbsdb库
+			</user>
+
+	3.vim /usr/local/mycat/conf/schema.xml	#再定义bbsdb库
+		<schema name="TESTDB" checkSQLschema="false" sqlMaxLimit="100">
+		.........
+		</schema>  #这一大块是定义一个库,所以我们想定义bbsdb库，得复制这个框架,然后再做相应修改
+		如下
+		<schema name="bbsdb" checkSQLschema="false" sqlMaxLimit="100">
+		<table name="lalalala" primaryKey="ID" dataNode="dn1,dn2"
+							   rule="sharding-by-intfile" />  #然后你想要什么样得表，就无脑去复制TESTDB里的表规则即可，改个表名就行	
+		</schema>
+	4.然后启动你服务即可
+
+——————————————————————————————————————以上是数据分片内容———————————————————————————————————————————
+
+mysql优化：为了让数据库高效，稳定的运行！要与 3.存储引擎 里的内容结合着看
+	mysql是由8大功能模块组成，让我们看一下优化器模块的工作流程
+		客户端先连接上数据库 -> 如果客户发送了sql查询请求，如果语句没有问题，数据库就会先去查自己的查询缓存，如果找到了相应的数据，就直接将数据返回给用户，
+		如果没有找到，数据库就会利用优化器，把用户的sql查询操作进行优化处理（就是根据你所用的引擎，再使用行锁，表锁，写锁，读锁这些操作），然后再去找对应的表，
+		这要是去找对应的表，就是去硬盘里找了！速度远远比去查询缓存里找要慢的多！
+		所以我们可以把查询缓存调大！这样数据存到内存的数量增多，查询速度就快了！
+	关于mysql性能调优的着手方向：
+		替换有问题的硬件（CPU 磁盘 内存等）
+		服务程序的运行参数调整
+		对sql查询进行优化（这部分就是指程序员设计的网站，连接数据库的相应操作写的太复杂，也会影响数据库处理速度）
+		数据库服务器的网络带宽
+		数据库架构的问题，是否做了读写分离架构
+
+	查看cpu负载
+		输入命令：uptime 
+		显示内容如下：
+		13:13:20 up  3:57,  2 users,  load average: 0.33, 0.15, 0.09
+		#0.33是cpu一分钟之内的平均负载 0.15是cpu5分钟内的平均负载 0.09是cpu15分钟内的平均负载，数字越小说明cpu越闲
+	查看磁盘状态
+		输入命令：iostat
+		显示内容中 %iowait 这列的值越大，说明排队要往硬盘里存储的数据越多！说明你磁盘的转数越慢！
+	查看内存的状态
+		输入命令：free -m
+		mem是物理内存 swap是交换分区 如果你交换分区的used越大说明你的物理内存不够用了
+
+优化mysql服务程序的运行参数
+	一、命令：mysql> show variables like "%conn%"; 	#查看连接数的锁有变量
+		其中显示的内容如下：
+		max_connections 		#是这台服务器数据库服务的最大允许连接数，超过这个数量就要等待！
+			修改最大连接数：
+				1.先临时改一下
+				mysql> set global max_connections=200; 
+				2.去改配置文件
+				vim /etc/my.cnf
+				在 [mysqld] 里写一行 
+				max_connections=200 	#这个最大连接数不能无限制设置，要通过公式来设置才合理 
+				保存退出，重启服务永久生效
+
+				如何确认合理的最大连接数？ 
+				mysql> show global status like "%conn%"; 		#查看mysql服务器全局状态，关于连接的状态！
+				其中Max_used_connections这句话的意思是这台服务器曾经有过的最大连接数
+				通过查看曾经有过的最大连接数，来设置最大连接数
+				我们用公式： 
+				Max_used_connections/max_connections=0.85 
+				推算出合理的max_connections值，最大连接数不能无限制调大
+		connect_timeout	 #这是允许客户端与数据库服务器建立连接的超时时间！多少秒之后连不上就不让你连了,也就是三次握手的时间
+		如果客户端与数据库建连的超时时间太长的话，数据库要等这一个客户（当然数据库肯定不是只能处理一台连接请求，有峰值而已）建连时，是无法响应其他用户的连接请求的
+		如果你建连时间太短的话，没等建连，就切断连接，这些操作是由cpu来处理的，会给cpu造成很大负担
+		所以一般不改这个超时时间
+			修改用户与数据库的建连超时时间：
+				1.临时改
+				set global connect_timeout=15
+				2.在配置文件[mysqld]里加一行
+				connect_timeout=15
+				3.重启服务
+		wait_timeout   #这是设置客户建立连接以后超过多少时间没动静，则断开与该用户连接的时间，默认是8小时，改不改看你需求，改的方法和上面那俩改的方法一样！
+
+	二、命令：mysql> show variables like "%buffer%";   	#查看缓存参数的相关变量，显示一堆，可以去mysql官网去查相应的变量的解释	
+		显示的内容中，写几个常用的变量：
+			key_buffer_size 		#（它的单位是字节（1024字节=1K））用于控制myisam引擎的关键索引缓存
+				myisam存储引擎的索引信息不是存到 .myi文件中吗，用户第一次查数据的时候，cpu会来查这个文件，查到之后，会将这段数据放到查询缓存里，
+				默认存放这个索引信息的缓存大小是8M
+			sort_buffer_size		#为排序查询保留的缓存大小
+				比如你客户端 select name from db1.user order by uid; 要对查询的结果排队，你的这个缓存设置的越大，它做排序的速度就越快
+			read_buffer_size 		#为顺序读取表记录保留的缓存大小
+				比如你客户端select * from db1.t5; 这个就是按顺序查看所有的t5表内容，缓存越大，查的越快
+	三、命令：mysql> show variables like "%cache%";
+		其中显示的内容中：
+			thread_cache_size		#允许保存在缓存中被重复使用的线程数量，默认值是9
+				比如你客户端要连接使用数据库了，我就要用9个中的一个线程来为客户服务，当客户操作完了并断开数据库连接了，这个线程也不会被系统杀掉，这样的线程有9个
+				这9个线程会一直待命，超过9个连接的时候，再重新开线程，这9个线程是在内存里活着的
+			table_open_cache		#为所有线程缓存的打开表的数量，默认是2000个
+				就比如说你用户来访问表记录的时候不是要打开一张表吗，如果打开表的数量超出2000张的话，等用户退出的时候，超出2000张数量的表会被关闭
+				下次用户来访问的时候，还得再重新打开这张表，速度就慢一些，而这打开的2000张表都存放在查询缓存里，也就是内存里，
+				你要是经常打开关闭表的话，这些操作都是cpu做的，时间久了不就损耗cpu吗，以后不就越来越慢了吗
+优化查询缓存：					
+	一、优化数据服务参数
+		mysql> show variables like "%query_cache%"
+		其中显示的变量参数：
+			query_cache_type   #这个是控制你sql查询语句缓存是否启用的参数，默认是OFF，你要是不开，那下面的东西对你而言都没用
+				你这个功能不开就无法把查询过的数据放到查询缓存里。
+				但是生产环境里，我们会用很多台服务器做查询语句的缓存服务器，用它们的物理内存，来充当数据库服务器所需要的查询缓存
+				假如有大面积的客户直接访问数据库，你这个数据库服务器不就累瘫痪了吗，网站服务器也是，所以才有了集群
+				如果你缓存服务器上没有的数据，它会找后台最大的数据库服务器要，再把结果存放到自己的内存里，再给用户
+				所以默认mysql数据库服务器这个选项没开，如果你有需求就把它开开
+
+			query_cache_size  		#如果你把查询缓存功能打开，默认给多少缓存用于sql查询语句，就是这个参数控制的，单位是字节，默认大小是1M
+
+			query_cache_wlock_invalidate 	#查询语句的缓存写锁，默认是OFF，是针对myisam存储引擎的
+				比如a这个用户查询了user表里name字段中叫bob的数据，它访问完之后，这条数据不是放到查询缓存里了吗
+				那b这个客户再来找user表里的name是bob的数据，cpu不就直接把这条数据返回给b客户了吗
+				但是假如它b客户查询到一半，也就是没提交命令的时候，c突然来修改name字段bob这条记录的数据了，这样不就造成数据不一致了吗
+				当然会发生这种情况的前提是我数据库服务器将自动提交功能关闭了！
+				开了这个选项，当客户端c在执行写操作时，就不会直接将查询缓存里的数据直接给客户b了，而是等c写完，再将数据给b，这不就是加写锁吗	
+			query_cache_limit			#如果你的查询缓存功能启用的话，当数据超出这个变量限制大小的时候，不允许往查询缓存里存储数据，默认也是1M
+			query_cache_min_res_unit		#这个是查询缓存的最小一块空间，就跟磁盘扇区是一个概念，最小一块是空间是4K
+				每一个最小空间，只能使用一次，可以把最小存储单元调小，但是存的最小空间越多，找起来越慢
+
+		那么我按照这个默认配置运行我的数据库，它运行的状态是否高效稳定呢？我们可以通过命令来查看数据库的运行状态信息
+			show global status like "%qache%";
+			其中显示的内容中：
+				Qcache_inserts		#数据库服务在查询缓存里找过几次数据，这里的值就是多少
+				Qcache_hits			#客户端通过查询缓存找到过几次数据，这里的值就是多少	
+					如果通过查询缓存找到的数据次数太少，说明你查询缓存太小，存的数据不够多
+				Qcache_lowmem_prunes	#这里记录的是清理查询缓存的次数
+					当你查询缓存，存满的时候，它会通过自己的算法，清除掉一部分不常被使用的数据，做过几次清理操作，这个值就是多少
+					这个值越大，说明你查询缓存空间太小                
+	二、优化程序员访问数据的sql命令
+	通过启用相关的日志来优化
+	数据库服务日志类型：
+		1.错误日志（默认启用）：
+			记录服务启动和运行过程中的信息 默认位置 /var/log/mysql.d
+			配置文件里不是log-error=/var/log/mysql.d 这一行吗
+
+		binlog日志：看之前的文档
+
+		查询日志：
+			记录在服务器上执行的所有sql命令！！！
+			想要启用在配置文件里写一行：
+			 	general-log 这是使用默认名称，如果你想指定文件名就写 general-log-file=你要起的名
+			然后重启服务
+			这个日志默认存放在 /var/lib/mysql    名称是： 主机名.log
+				我们可以动态的查看一下这个日志内容： tail -f /var/lib/mysql/localhost.log
+				Time：是命令执行的时间 	Id：是给命令做的编号sln 	Commond：是具体的执行过的命令	Argument：这里是命令的参数
+		慢查询日志：
+			记录超过指定时间,才显示查询结果的sql命令，指定时间默认是10秒
+			想要启用的话，就去my.cnf里写3行：
+				slow-query-log 或者指定日志名称 slow-query-log-file=....
+				指定一下超时时间：long-query-time=10 不写默认是10秒
+				将没有使用索引做查询的sql语句也记录下来，使用索引的意思就是让查询结果排序：
+				log-queries-not-using-indexes
+			保存退出重启服务
+			这个日志文件默认存放在/var/lib/mysql下	默认名称是：主几名-slow.log
+				记录的格式和查询日志差不多，你想让它记录内容，可以输入一条休息多少秒的指令，它就会记录这条超时显示的命令的所有信息
+				select sleep(11);  这条命令的意思就是等11秒之后再执行select操作
+			生产环境里就可以用这个文件来看，用户的哪条sql命令超时显示了
+			mysql服务有管理慢查询的命令：
+				mysqldumpslow localhost-slow.log  这条命令就是用来统计慢查询的相关信息的，比tail -f查方便些
+				我们可以把mysqldumpslow localhost-slow.log查出来的结果重定向给一个文件里，然后把这个文件给程序员，让他们自己去优化	
+
+
+
+
+
+
+
+
+
+
+
+
+

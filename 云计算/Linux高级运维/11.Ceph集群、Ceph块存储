@@ -1,0 +1,277 @@
+Ceph存储：分布式存储。是目前市场上做的最好的。
+	之前学的存储iscsi/nfs/samba/ftp它们全不是分布式的，例如我们做了一个数据库或者视频网站，需要非常大的存储空间，主板上能插的硬盘是有限的，你不能扩容。
+	而Ceph是一个分布式的集群存储可以提供高扩展，高可用，高性能，做分布式存储的还有Hadoop Lustre GlusterFS FastDFS
+	Ceph可以提供EB级别的存储 EB=1024PB=1024TB=1024GB
+	Ceph可以用普通的电脑加入集群做存储，并且Ceph既能做云盘，又能做块存储，还能做文件共享
+	Ceph的网络帮助文档：http://docs.ceph.org/strat/intro 这里面可是有汉化版的
+Ceph的组件：
+	OSDs存储设备  是真正负责存储的空间 对应的软件叫ceph-osd
+	Monitors软件，是负责集群的管理和充当监控器，自带健康检查的！当其中一台设备坏了，自动加入新设备！
+Ceph工作原理：
+ 	一台服务器代表Monitors负责调度后台子服务器的OSDs，用户访问也是访问Monitors，而ceph用的调度算法是CRUSH，可以很好的保证，当做容量扩容时，数据不会发生大的迁移。
+ 	当用户要写入数据时，Ceph会把一份大的数据拆分成无数个4M的碎片，然后可以同时写入多个存储设备里，这样以前可能要1个小时写入一台设备的数据，会很快的被同时存入到多台设备里！
+	极大的提高了存储速度，当然这些4M的碎片都会被MD5算一下再存，来保证数据的完整性。
+	Ceph默认是3个副本。用户传1个G的数据，其实ceph是拷贝存了三份，相当于每个4M都存三份，所以做ceph最少要3台存储机器！
+	Monitors调度器也是最少三台，不然整个服务起不来。如果你想节省成本，可以三台服务器既是Monitors也是osd存储！ 
+Ceph几种共享方式：
+	RBD模式：也叫块存储方式，和iscsi是一样的结果，用户访问然后挂载到本地，本地就会多出来一块磁盘，当然用户还要格式化这块磁盘，这块磁盘就是由多台子服务器提供的存储空间。
+	这种功能不需要单独装包，是osd软件包里自带的。
+	mds模式：这个叫文件系统共享，像nfs一样，用户直接把网上的目录mount挂载到本地就可以进行存储和写入数据了，想实现这个功能需要独立装包。
+	radosgw模式：也叫对象存储，云盘，是必须要开发写程序的，因为用户访问的是APP或者网站啊！也要单独装支持这个功能的软件包。对于客户端来说，它必须要安装一个ceph-common软件
+接下来实际部署环境：
+	要求如下：
+		客户端client  eth0 192.168.4.10/24
+		服务器每一台都是mon与osd结合  (主机名必须改) 然后还要配置yum源
+		node1 eth0 192.168.4.11/24
+		node2 eth0 192.168.4.12/24
+		node3 eth0 192.168.4.13/24
+	步骤一：安装前准备
+	ceph软件是在单独的光盘里....叫rhcs2.0-rhosp9-20161113-x86_64.iso，把这个光盘挂载到你创建的目录下
+	1）物理机为所有节点服务器配置yum源服务器。真机当ftp给虚拟机提供yum源
+		[root@room9pc01 ~]# yum -y install vsftpd
+		[root@room9pc01 ~]# mkdir  /var/ftp/ceph
+		[root@room9pc01 ~]# mount -o loop \
+		rhcs2.0-rhosp9-20161113-x86_64.iso  /var/ftp/ceph
+		[root@room9pc01 ~]# systemctl  restart  vsftpd
+	2）修改4个虚拟机都需要配置YUM源（这里仅以node1为例）。配三个yum源，对应的是三个子目录
+		[root@node1 ~]# vim /etc/yum.repos.d/ceph.repo
+		[mon]
+		name=mon
+		baseurl=ftp://192.168.4.254/ceph/rhceph-2.0-rhel-7-x86_64/MON   //这里有个之前的知识点，192.168.4.254相当于网站根目录/var/ftp
+		gpgcheck=0
+		[osd]
+		name=osd
+		baseurl=ftp://192.168.4.254/ceph/rhceph-2.0-rhel-7-x86_64/OSD
+		gpgcheck=0
+		[tools]
+		name=tools
+		baseurl=ftp://192.168.4.254/ceph/rhceph-2.0-rhel-7-x86_64/Tools
+		gpgcheck=0
+	3）修改所有虚拟机123和client的 /etc/hosts
+	警告：/etc/hosts解析的域名必须与本机主机名一致！！！！
+		[root@node1 ~]# vim /etc/hosts
+		... ...
+		192.168.4.10     client
+		192.168.4.11     node1
+		192.168.4.12     node2
+		192.168.4.13     node3
+	配置无密码连接(包括自己远程自己也不需要密码)。等会批量远程其它机器，一起装包
+		[root@node1 ~]# ssh-keygen   -f /root/.ssh/id_rsa    -N ''
+		[root@node1 ~]# for i in 10  11  12  13
+		> do
+		> ssh-copy-id  192.168.4.$i  //把生成的密钥传给每一台需要远程的机器
+
+		> done
+		[root@node1 ~]#ssh-add //把生成的密钥添加到缓存中！
+	步骤二：配置NTP时间同步,因为ceph集群要求时间差不能超过0.5毫秒
+		1）真实物理机创建NTP服务器。真机去网上要时间，其它虚拟机管真机要时间。
+		[root@room9pc01 ~]#  yum -y install chrony
+		vim /etc/chrony.conf
+		server 0.centos.pool.ntp.org iburst
+		allow 192.168.4.0/24
+		local stratum 10
+		systemctl  restart  chronyd
+	其他所有节点虚拟机都管真机要时间，NTP服务器同步时间（以node1为例）。
+		[root@node1 ~]#  vim /etc/chrony.conf
+		server 192.168.4.254   iburst
+		[root@node1 ~]# systemctl  restart  chronyd
+	准备存储磁盘
+	物理机上为每个虚拟机准备3块磁盘，那个client不需要。（可以使用命令，也可以使用图形直接添加）
+		virt-manager 打开虚拟机的命
+
+		以上做完就完成部署环境了
+
+下面来做一个规划：
+	以node1为例：
+	vdb 分成两个分区 每个分区10个G vdb1做vdc的缓存 vdb2做缓存vdd的缓存，它先写完再慢慢存到那俩盘，
+	生产环境里这个vdb必须是固态硬盘，因为速度贼快，如果全是磁盘，那特么不需要	vdb，如果全是固态盘，也特么不要vdb，这个vdb也叫高效云盘，隔一会再往vdb里存别的数据可以直接覆盖！
+	vdc 20G
+	vdd 20G
+	所以真正的存储空间是40G
+
+	为了能更方便部署集群，而不是人为的一台台的部署，会用到python写的一个脚本工具ceph-deploy
+	这个时候在node1里操作，因为刚才是在node1里做的无密码远程连接。
+	部署Ceph集群服务器，实现以下目标：
+	安装部署工具ceph-deploy
+	创建ceph集群
+	准备日志磁盘分区
+	创建OSD存储空间
+	查看ceph状态，验证
+
+	ceph部署
+	yum -y install ceph-deploy
+	ceph-deploy  --help可以查看使用帮助
+	创建目录
+	mkdir ceph-cluster 起什么名字无所谓
+	cd ceph-cluster/   必须要进入这个目录里操作
+	1）创建Ceph集群配置。
+		ceph-deploy new node1 node2 node3  #它的作用就是vim写一个ceph的配置文件，并且自动创建ceph的日志文件，和ceph密钥文件里面是一个用户名和一串随机密码，客户端想用ceph这个集群存储服务，就要输入这个文件里的用户名和密码，且new这个命令会直接将ceph的配置文件写好，内容如下
+	第一行：mon代理服务器都有谁
+	第二行：每个代理服务器都是谁，也就是ip地址
+	....
+	2）通过ceph-deploy给整个集群ceph装包
+	ceph-deploy install node1 node2 node3   这个命令会把ceph有关的所有软件，全部都给整个集群装上
+	全装了也没关系，不启动不用的服务，就毛事没有
+	3）给所有的mon代理服务器启服务，并把相关配置文件，密钥都拷贝给其它mon服务器
+	ceph-deploy mon create-initial
+	输入systemctl status ceph@node2.service   可以查看node2这个服务启动没有
+
+常见错误及解决方法（非必要操作，有错误可以参考）：
+如果提示如下错误信息：
+[node1][ERROR ] admin_socket: exception getting command descriptions: [Error 2] No such file or directory
+解决方案如下（在node1操作）：
+先检查自己的命令是否是在ceph-cluster目录下执行的！！！！如果时确认是在该目录下执行的create-initial命令，依然保存，可以使用如下方式修复。
+[root@node1 ceph-cluster]# vim ceph.conf      #文件最后追加以下内容
+public_network = 192.168.4.0/24
+修改后重新推送配置文件:
+[root@node1 ceph-cluster]# ceph-deploy --overwrite-conf config push node1 node2 node3
+
+ceph -s命令，可以查看整个集群的状态
+
+	现在该创建OSD存储了
+	1）准备磁盘分区（node1、node2、node3都做相同操作），每一台机器都要操作！
+		parted  /dev/vdb  mklabel  gpt     先给vdb磁盘做2个缓存分区
+		parted  /dev/vdb  mkpart primary  1M  50%   
+		parted  /dev/vdb  mkpart primary  50%  100%
+		chown  ceph：ceph  /dev/vdb1  给这俩分区改权限，因为默认这个分区是root所有，所属组也是root，但是重启特么权限没了，这个硬件方面的事是udev决定的
+		chown  ceph：ceph  /dev/vdb2  //这两个分区用来做存储服务器的日志journal盘
+		vim /etc/udev/rules.d/a.rules  //咱去改udev的规则，这个a.rules是之前实验创建的
+		ENV{DEVNAME}=="/dev/vdb1",OWNER="ceph",GROUP="ceph"   //如果设备名叫/dev/vdb1 做后面的操作
+		ENV{DEVNAME}=="/dev/vdb2",OWNER="ceph",GROUP="ceph"                
+		2）初始化清空磁盘数据（仅node1操作即可）
+		[root@node1 ceph-cluster]# ceph-deploy disk  zap  node1:vdc   node1:vdd  //让ceph-deploy来格式化所有集群的/vdc /vdd，因为要特么存数据了   
+		[root@node1 ceph-cluster]# ceph-deploy disk  zap  node2:vdc   node2:vdd
+		[root@node1 ceph-cluster]# ceph-deploy disk  zap  node3:vdc   node3:vdd   
+		3）创建OSD存储空间（仅node1操作即可）
+		[root@node1 ceph-cluster]# ceph-deploy osd create \
+		node1:vdc:/dev/vdb1 node1:vdd:/dev/vdb2  
+		//创建osd存储设备，vdc为集群提供存储空间，vdb1提供JOURNAL缓存，
+		//一个存储设备对应一个缓存设备，缓存需要SSD，不需要很大
+		[root@node1 ceph-cluster]# ceph-deploy osd create \
+		node2:vdc:/dev/vdb1 node2:vdd:/dev/vdb2
+		[root@node1 ceph-cluster]# ceph-deploy osd create \
+		node3:vdc:/dev/vdb1 node3:vdd:/dev/vdb2 
+		4）啥都准备好了，该给客户使了，把osd给客户共享node1上操作，并且用ceph-deploy给23也一起搞定
+		[root@node1 ceph-cluster]# ceph-deploy osd create \      //我要创建共享盘了
+		node1:vdc:/dev/vdb1 node1:vdd:/dev/vdb2     //vdc为集群提供存储空间，vdb1为vdc提供缓存 vdd为集群提供存储空间，vdb2为vdd提供缓存，如果没有缓存：/dev/vdb1 ：/dev/vdb2 就不用写
+		[root@node1 ceph-cluster]# ceph-deploy osd create \   
+		node2:vdc:/dev/vdb1 node2:vdd:/dev/vdb2
+		[root@node1 ceph-cluster]# ceph-deploy osd create \
+ 		node3:vdc:/dev/vdb1 node3:vdd:/dev/vdb2
+		以后再想添加新的设备磁盘空间，再敲这个命令就可以直接添加指定电脑的磁盘了！ 
+5）常见错误（非必须操作）
+使用osd create创建OSD存储空间时，如提示run 'gatherkeys'，可以使用如下命令修复：
+[root@node1 ceph-cluster]#  ceph-deploy gatherkeys node1 node2 node3 
+
+！！！！！！！ceph的集群调度器，同时都在工作，不分主次！！！！！！！！
+
+然后验证测试：
+	可以用ceph -s   systemctl status ceph[tab]  来查看集群的状况，和共享盘的状况哦
+常见错误（非必须操作）：
+	如果查看状态包含如下信息：
+	health: HEALTH_WARN
+      clock skew detected on  node2, node3…  
+	#clock skew表示时间不同步，解决办法：请先将所有主机的时间都使用NTP时间同步！！！
+	Ceph要求所有主机时差不能超过0.05s，否则就会提示WARN，如果使用NTP还不能精确同步时间，可以手动修改所有主机的ceph.conf，在[MON]下面添加如下一行：
+	mon clock drift allowed = 1
+	如果状态还是失败，可以尝试执行如下命令，重启ceph服务：
+	[root@node1 ~]#  systemctl restart ceph\*.service ceph\*.target
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+ceph这个软件提供三种共享，之前提到过，现在来研究块存储共享：
+	创建Ceph块存储，对方dev下会多一块磁盘，需要客户自己格式化才能用
+	沿用练习一，使用Ceph集群的块存储功能，实现以下目标：
+	创建块存储镜像
+	客户端映射镜像
+	创建镜像快照
+	使用快照还原数据
+	使用快照克隆镜像
+	删除快照与镜像
+
+	1）查看存储池。你的共享磁盘全都在共享池里。共享磁盘又叫image镜像，用的是总osd空间！
+	ceph osd lspools  查看共享池命令
+	0 rbd,   默认就有一个共享池，叫rbd
+	2）创建镜像、查看镜像
+	rbd create demo-image --image-feature  layering --size 10G  
+//rbd create是创建镜像 demo-image是指镜像的共享名，随便打啥都行，不指定共享池时，默认放那个唯	一的rbd共享池里， --image-feature是问你这个镜像支持什么功能
+layering是指分层快照功能，如果哪天坏了，这个功能可以还原数据，
+rbd create rbd/image --image-feature  layering --size 10G  这个就明确指定镜像放哪个共享池了，并且起名叫image 
+rbd list 可以查看共享盘都叫什么名字
+rbd info demo-image  可以查看这个共享磁盘的具体情况
+	3）动态调整共享磁盘的大小
+	变大的命令：
+ 	rbd resize --size 15G image     增加到多少G
+	变小的命令：
+ 	rbd resize --size 7G image --allow-shrink  减少到多少G
+
+	好了服务器做完了，该客户端访问了
+	1）在集群里用，就是我集群里的mon服务器，用集群里image镜像
+	在集群里做贼鸡巴省事，因为没一台调度器的密钥文件都在本机，而且ceph-common也都是一起装好的，所以直接一条命令就OK
+	集群内将镜像映射为本地磁盘（node1为例）
+	[root@node1 ~]# rbd map demo-image
+	2）肯定要一个干净的虚拟机！做客户端访问！client上操作
+	#客户端需要安装ceph-common软件包  装完之后会有个/etc/ceph目录产生 里面有个rbdmap
+	#拷贝node1的配置文件（否则不知道集群在哪）拷贝这个 /etc/ceph/ceph.conf
+	#拷贝连接密钥（否则无连接权限）
+	[root@client ~]# yum -y  install ceph-common
+	[root@client ~]# scp 192.168.4.11:/etc/ceph/ceph.conf  /etc/ceph/  #这是把11的文件拷贝给我自己，哈哈哈
+	[root@client ~]# scp 192.168.4.11:/etc/ceph/ceph.client.admin.keyring \
+	/etc/ceph/
+	[root@client ~]# rbd map image  #挂载image这个共享磁盘  rbd unmap image 可以卸载
+	lsblk 看这个共享磁盘在本机叫什么名字，但是你可能看不出来，哪个是，那么就用这个命令rbd showmapped就能看出来了
+      	id pool image snap device    
+         	0  rbd  image -    /dev/rbd0
+	客户端格式化、挂载这个拿来的分区，完事就可以玩了
+	[root@client ~]# mkfs.xfs /dev/rbd0
+	[root@client ~]# mount /dev/rbd0 /mnt/
+	[root@client ~]# echo "test" > /mnt/test.txt
+	因为是三副本，你存1G，这个盘在客户哪边会显示存3G
+
+———————————————————————————————————————————————————————————————————————————————————
+
+现在在客户端把它卸载：
+	umount /mnt
+	rbd unmap image
+研究快照功能，用于数据还原：
+	快照的实现原理：基于COW（copy on write）写时复制
+	假如有100G数据，为了防止它丢失，给它做个快照，几秒就OK，但是照下来之后，这个备份的数据就不会再变化了！这个快照才10M甚至更小左右的大小，快照其实就是做快捷方式，有多少个文件，做多少个快捷方式，只有当人为处理文件里的内容时，文件发生变化时，快照才会把原来的数据拷贝下来，所以当快照的文件变化时，它的空间会越用越多，你一定要提前准备好这个快照的大小，一旦空间不够，可是会崩溃的！
+
+以拷贝数据库数据为例子：
+cp
+scp
+rsync 
+tar     这几种拷贝，不可能一瞬间就拷贝完,如果要拷贝好几个小时，数据发生变化了，还有没备份到的数据已经变化了，那这个拷贝就不叫你开始拷贝时的时间。所以数据库有个功能，可以锁。这个锁功能是你可以查，但是你不能写了！但是特么缺点就是锁表就代表你不能买东西了，无法写入数据库了！这个时候就特么可以用快照了，几秒快照完，把数据库的锁打开，这样，特么的一旦原来数据发生变化，就会把以前的数据拷贝下来！这样你特么拷贝的就是那个锁表时的数据！
+
+接下来对image共享磁盘做快照：
+	1）创建镜像快照
+	[root@node1 ~]# rbd snap create image --snap image-snap1  对image做快照，--snap是要给这个快照取名字，一般取名字最后加日期
+ 	rbd snap ls image可以查看快照
+	2）删除客户端写入的测试文件 client上操作
+	但是ceph不支持在线还原，你要把ceph的共享磁盘卸载！
+	umount /mnt
+	rbd unmap image
+	3)去服务器为客户端还原快照里的数据
+	rbd snap rollback image --snap image-snap1  //对image这个磁盘做数据还原用的快照名称是image-snap1
+	然后就可以让client重新挂载了！完活！ 
+ 	mount /dev/rbd0 /mnt/
+ 	ls  /mnt
+你还可以基于快照生成一个共享磁盘！那这个镜像盘里可就是有数据的非空盘了！
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,223 @@
+运维7天围绕web服务器，现在用Nginx  Nginx要更强一些 市面上用的最多的是Nginx
+软件是Nginx    要做web网站，可以用众多的软件Apache Nginx tengine Lighttpd tomcat /ibm web spaher/ jboss
+现在所有的业务都是围绕web服务器，所有的手机浏览信息
+Apche是第一个网络软件，特别老了
+性能与并发量要求越来越高了 Nginx是俄罗斯人开发的 engine引擎 x
+nginx是轻量级的，理论上的并发量是5万  http是3万  Tengine（淘宝引擎）是Enginx的改进
+微软的web服务器是IIS
+打开一个网页，按F12控制台  选中网络
+随便选择一个碎点
+我要发送请求就是 请求头
+服务器发给我的就是 响应头
+server:'nginx'
+
+*****************************************************************************************************************
+
+环境配置：4台虚拟机,及关闭selinux firewall
+ip地址  yum源（用网络yum源，注意要把网络源挂载到本地）    主机名
+但是eth1配置需要先去做识别 先去创建add eth1 
+添加网卡eth1：nmcli connection add con-name eth1 ifname eth1 type ethernet
+
+构建Nginx服务器  
+ftp://172.40.50.118/courese/operation 找lnmp_soft.tar.gz这个包 先获取源码包的压缩包
+使用源码包安装nginx服务器  
+1.先用yum安装依赖包gcc（c语言解释器） pcre-devel（支持正则） openssl-devel（可以做https）
+2.解压源码包 将这个源码包解压到指定位置
+  再进入这个解压到的路径下，去解压 tar  -xf   nginx-1.10.3.tar.gz这个压缩包 
+  然后进入lnmp_soft/
+  然后进入 cd  nginx-1.10.3
+  (以前用的yum装包，自动就有这些步骤）
+  然后创建一个无法登陆的useraddnginx用户，以这个用户启动nginx服务,这样当别人攻击了网站，拥有的权限就是这个用户的权限
+./configure\   进入配置模式
+    --prefix=/usr/local/nginx \                 //指定安装路径   注意一定要有空格
+    --user=nginx \                              //指定这个工具的所属者
+    --group=nginx \                             //指定这个工具的所属组
+    --with-http_ssl_module（做加密的功能）           //开启SSL加密功能   模块化设计！将功能分开！只装对应的功能，极大的节约内存！
+     以上所有是一行命令所以需要\转行
+     然后输入make && make install（安装）
+3.ls /usr/local/nginx  查看以下东西在不在
+  配置文件是conf   html是网页路径   logs是日志  sbin是程序
+    [root@proxy ~]# /usr/local/nginx/sbin/nginx                    //启动服务，不能重复打
+    [root@proxy ~]# /usr/local/nginx/sbin/nginx -s stop            //关闭服务，不能重复打
+    [root@proxy ~]# /usr/local/nginx/sbin/nginx -s reload          //重新加载配置文件，不会关服务，会立即生效，服务必须是开的
+    [root@proxy ~]# /usr/local/nginx/sbin/nginx -V                 //查看软件信息
+    [root@proxy ~]# ln -s /usr/local/nginx/sbin/nginx /sbin/       //方便后期使用，创建连接，且不占用空间，也可以用cp，但是慢
+
+netstat命令可以查看系统中启动的端口信息，该命令常用选项如下：
+
+-a显示所有端口的信息
+
+-n以数字格式显示端口号
+
+-t显示TCP连接的端口
+
+-u显示UDP连接的端口
+
+-l显示服务正在监听的端口信息，如httpd启动后，会一直监听80端口
+
+-p显示监听端口的服务名称是什么（也就是程序名称）
+ netstat  -anptu  |  grep nginx 用来筛选
+
+****************************************************************************************************************
+
+增加模块！利用升级功能。可以完整覆盖重装，和追加重装。
+可以跨版本重装。
+1.先获取1.12源码包，将其解压，这个1.12也在lnmp压缩包里
+cd lnmp_soft     tar -xf nginx-1.12.2
+cd nginx-1.12.2    
+[root@proxy nginx-1.12.2]#
+依赖包之前装过了
+./configure   \
+> --prefix=/usr/local/nginx   \     注意一定要有空格
+> --user=nginx   \ 
+> --group=nginx  \ 
+> --with-http_ssl_module
+做完这些操作，会多一个objs目录（是根据你选择的模块，把你需要的模块拷贝到objs里，但是此时里面没有可执行程序）
+        ls /root/lnmp_soft/nginx1.12.2/objs/src 这里放的是Nginx所有程序的源代码
+[root@proxy nginx-1.12.2]#进入，nginx-1.12.2然后再make     make的功能是让源码转换为2进制告诉计算机  
+                          mv /usr/local/nginx/sbin/nginx  /usr/local/nginx/sbin/nginxold此时因为有两个版本，都叫nginx，所以要把老版本的改个名字做备份
+[root@proxy nginx-1.12.2]# cp ./objs/nginx  /usr/local/nginx/sbin/         //拷贝新版本，新版的可执行程序在objs里
+再创建一条软连接到ln -s /usr/local/nginx/sbin/nginx  /sbin
+现在 nginx -s stop或者kill 进程号  killall nginx     //将老程序结束
+再   nginx运行   这时候就是新版本了
+
+
+/usr/local/nginx/conf/nginx.conf 是nginx默认配置文件
+每一个server {}   是一个网页
+server{
+        listen       80;                      //指定端口号,一定要以分号结尾
+        server_name  localhost;               //指定域名                                       
+        root   html;                          //网页根目录在哪
+        index  index.html index.htm;          //默认先打开index.html页面，在index.html打不开时，会打开index.htm
+       }
+默认网页存放路径：/usr/local/nginx/html/*  
+
+****************************************************************************************************************
+
+案例一：用户认证
+用户必须输入用户名和密码才能访问网页
+两行需要配置
+auth_basic "hello:";              认证提示符""里面的内容自己写
+auth_basic_user_file "/usr/local/nginx/pass";     认证密码文件，pass文件自己创建自己写
+
+server{
+        listen       80;                                     //指定端口号,一定要以分号结尾
+        server_name  www.a.com;                              //指定域名
+        auth_basic "Input Password:";                        //认证提示符""里面的内容自己写
+        auth_basic_user_file "/usr/local/nginx/pass";        //认证密码文件，pass文件自己创建自己写
+        ssl_session_cache    shared:SSL:1m;                  //
+        ssl_session_timeout  5m;                             //
+        location / {
+            root   html;                                     //网页根目录在哪
+            index  a.html;                                   //自己写一个
+ }
+这个pass文件要想生效，需要先去装httpd-tools
+htpasswd -c /user/local/nginx/pass  用户名        用htpasswd -c命令去创建
+只有第一次创建登陆用户使用 -c
+第二次再想追加用户 去掉 -c
+再/usr/local/nginx/sbin/nginx -s reload 重启
+
+*****************************************************************************************************************
+
+案例二：基于域名的虚拟主机，一台服务器，提供多个网站服务
+可以在anoter virtual host 下面的那个server做另一个域名网站，去掉server里的注释可以在末行模式输入 86，95s/#//
+改成
+server{
+        listen       80;                                     
+        server_name  www.b.com;                              
+        location / {
+            root   www;                //网站根目录在哪,www没有自己/usr/local/nginx下去创建
+            index  index.html;         //index.html自己创建
+            charset utf-8;             //让网页支持中文，否则网页里写中文就是乱码
+ }
+以上都操作完了，重启nginx
+但是此时没有域名解析，可以配置cat /etc/hosts本地域名解析文件 192.168.4.5 www.b.com www.a.com  注意是给客户机配置！
+
+补充：
+文字编码
+ascII码： 可以将0 1 的组合替换成英文和符号。
+国标2312：可以支持简体中文和基本的英文  0 1
+BIG5：支持繁体  0 1 
+苹果及许多大公司，联合推出了一个编码，叫万国编码 utf-8
+
+创建基于ip网站 同一台服务器，提供两个网站服务,其他网页都是4.5提供的，这回变成2.5提供服务
+server{
+        listen   192.168.2.5：80;                            //指定ip以及端口号,一定要以分号结尾
+        server_name  www.c.com;                              //指定域名
+        location / {
+            root    demon01;                                     //网页根目录在哪
+            index   index.html;                                   //默认先打开demon1页面
+ }
+
+php_scripts下有个网页模板叫web_demon的压缩包
+这压缩包里有3个网站文件夹，demon1 2 3
+
+****************************************************************************************************************
+
+配置SSL虚拟主机
+虚拟主机的加密网站，之前的实验叫用户认证，不存在公私钥解密的问题
+TCP/IP协议 传输的时候都是明文传输
+所以要利用http+SSL = https
+加密算法：对称加密 非对称加密
+对称加密：加密的时候是123  解密是123            工作机制导致网络加密不安全加密解密都是一把钥匙，只用在单机加密   
+非对称加密：加密的时候是123 解密是as2d       加密和解密不是一把钥匙  私钥解密  公钥匙加密       
+  王 --------------------------------------------------- taobao（公钥 私钥）  私钥只在taobao手里不在网上传输
+用户密码                                  用户密码       
+当王访问taobao就会下载公钥，而解密用的私钥在淘宝网自己手里，没有进行网络的传输 
+                
+信息摘要：信息完整性校验
+MD5算法不安全 / sha256  虽然是加密算法，但是现在用来校验
+可以利用命令直接做加密
+md5sum anaconda-ks.cfg 给一个文件做MD5的加密算法   MD5算法跟文件名，时间，权限都无关，只跟文件内容有关，所以用来校验完整性，sha256与它功能一样
+将这些生成的MD5码保存下来，和以后再做对比，就能很快发现，哪个文件被攻击了
+
+ssl  前提先下载对应的http+SSL = https是模块功能之一 --with-http_ssl_module
+生成私钥和证书（就是公钥）
+1.密钥一定要放在Nginx软件配置文件的目录下
+cd /usr/local/nginx/conf/   这是软件配置文件目录
+openssl generation > cert.key  					生成私钥
+openssl request -new -x509 -key cert.key > cert.pem           制作证书（公钥） 
+                          (固定格式)  (用哪个私钥解密) 生成的就是公钥
+
+回答的第一个问题是CN其他都无所谓
+2.修改Nginx配置文件
+HTTS server下面的sever{}去掉注释，并将域名改成一个虚拟主机名
+server {
+        listen       443 ssl;监听端口是443
+        server_name            www.c.com;
+        ssl_certificate      cert.pem;         #这里是证书文件
+        ssl_certificate_key  cert.key;         #这里是私钥文件这俩文件以后可以去安全网站买，别忘了放指定位置
+        ssl_session_cache    shared:SSL:1m;    #是缓存
+        ssl_session_timeout  5m;               #加密超时时间是 5分钟
+        ssl_ciphers  HIGH:!aNULL:!MD5;         #加密算法不能用哪种!MD5
+        ssl_prefer_server_ciphers  on;         
+        location / {                           #是指根网页目录
+            root   html;
+            index  index.html index.htm;
+        }
+    }      
+                                                                                                     
+然后重启Nginx
+#请先确保nginx是启动状态，否则运行该命令会报错,报错信息如下：
+#[error] open() "/usr/local/nginx/logs/nginx.pid" failed (2: No such file or directory)
+
+然后客户端验证
+前提是在/etc/hosts加解析   
+客户端访问：https://www.c.com    要添加例外，客户端获取证书
+
+这个公私钥是自己生成的，浏览器不信任，服务端可以找授权中心买公私钥 ssl证书，买回来之后可以调用买的这两个文件就行了。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

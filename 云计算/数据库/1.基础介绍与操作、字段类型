@@ -1,0 +1,334 @@
+老师的邮箱：panglj@tedu.cn
+本阶段适合岗位：DBA 数据库管理员
+课程分为两部分：数据库管理15天（5天基础 5天进阶 5天NOsql）  安全与监控6天
+远程：172.40.50.117 7000
+ftp：//172.40.50.117/nsd1811
+ftp：//172.40.50.117/2018/soft
+
+
+准备环境：
+先准备一台虚拟机：
+	IP：192.168.4.50
+本案例要求熟悉MySQL官方安装包的使用，快速构建一台数据库服务器：
+	安装MySQL-server、MySQl-client软件包 
+	修改数据库用户root的密码 
+	确认MySQL服务程序运行、root可控 
+	本课程将使用64位的RHEL 7操作系统，MySQL数据库的版本是5.7.17。
+	访问http://dev.mysql.com/downloads/mysql/，找到MySQL Community Server下载页面，平台选择“Red Hat Enterprise Linux 7/ Oracle Linux”，然后选择64位的bundle整合包下载，如图-1所示。
+	注意：下载MySQL软件时需要以Oracle网站账户登录，如果没有请根据页面提示先注册一个（免费）
+
+以上的方法就是企业里装mysql数据库的方法，教学环境不这么做！
+这个数据库软件包的压缩包文件在ftp：//172.40.50.117/2018/soft 这里下也可以，拷贝 mysql-5.7.17.tar 这个压缩包
+
+什么是数据库：
+	就是存储数据的仓库，数据包括视频 音频 图片 文本文件，
+	比如把考试成绩数据存放到数据库里，就可以进行算法运算
+谁在使用数据库服务：
+	比如每天在APP上订饭，需要注册帐号信息。  购物网站，娱乐网站，金融机构
+提供数据库服务的软件：
+	orcle mysql/mariaDB
+	DB2
+	SQLserver
+	我们要考虑软件是否花钱，是开源软件还是商业软件，是否支持跨平台，在公司里不能用盗版软件，否则会罚款。Orcle DB2 SQLserver都是商业软件
+	跨平台（Unix linux windows）的软件除了SQLsever只能装windows里用，剩下的全是跨平台的
+
+我们要用mysql软件搭建数据库服务器：
+	了解一下mysql：被甲骨文收购了，有闭源的风险 对应的是MariaDB，在服务器上，不能同时安装这两个软件，只能有一个！
+	Mysql数据库的特点：
+		适用于中小型企业的关系型数据库系统
+		1.是关系型数据库（RDBMS）2.跨平台 3.可移植性好（底层是C或C++写的） 
+		4.通过API支持Python/java/PHP/Perl等语言（我们的APP是这几种语言写的，就可以用连接命令连Mysql数据库）
+	Mysql的典型应用环境：
+		1.LAMP  Apache
+		2.LNMP  Nginx	
+	相关名词：
+		DB：数据库，依照某种数据存储规范，进行组织，并存到数据库的磁盘空间里
+		DBMS：数据库管理系统，用来操纵和管理数据库的大型服务软件，也就是mysql mariaDB这样的软件
+		DBS：数据库系统 也就是DB+DBMS
+	
+搭建Mysql服务器：192.168.4.50 关防火墙 关SELinux 别忘了装yum 和改主机名成mysql50
+	1.装mysql包的前提：
+		停止mariadb服务：systemctl  stop mariadb
+				    删除/etc/my.cnf配置文件
+				    此配置文件由RHEL自带的mariadb-libs库提供：
+			         rm -rf /etc/my.cnf
+				    删除数据rm -rf /var/lib/mysql/* （这一步应该是装完mysql软件做的操作）
+				    卸载软件包（没有会显示未安装软件包）：
+					rpm -e --nodeps mariadb-server mariadb 
+    					警告：/var/log/mariadb/mariadb.log 已另存为/var/log/mariadb/mariadb.log.rpmsave
+		安装mysql时可能会缺少某些依赖包，需提前单独安装：
+			 yum -y install perl-Data-Dumper  perl-JSON  perl-Time-HiRes
+		mysql这个数据库软件包的压缩包文件在ftp：//172.40.50.117/2018/soft/mysql 真机去这里下，真机拷贝 mysql-5.7.17.tar 这个压缩包 发到虚拟机里，
+ 	虚拟机将其解压，然后把所有软件包都装了：
+	压缩包里所含的软件包内容：
+	./mysql-community-client-5.7.17-1.el7.x86_64.rpm #客户端应用程序，用于存放数据库管理命令
+	./mysql-community-common-5.7.17-1.el7.x86_64.rpm #数据库和客户端库共享文件
+	./mysql-community-devel-5.7.17-1.el7.x86_64.rpm	#客户端应用程序的库和头文件
+	./mysql-community-embedded-5.7.17-1.el7.x86_64.rpm	#嵌入式函数库
+	./mysql-community-embedded-compat-5.7.17-1.el7.x86_64.rpm	#嵌入式兼容函数库
+	./mysql-community-embedded-devel-5.7.17-1.el7.x86_64.rpm	#头文件和库文件作为mysql的嵌入式库文件
+	./mysql-community-libs-5.7.17-1.el7.x86_64.rpm	#数据库客户端应用程序的共享库
+	./mysql-community-libs-compat-5.7.17-1.el7.x86_64.rpm	#客户端应用程序的共享兼容库
+	./mysql-community-minimal-debuginfo-5.7.17-1.el7.x86_64.rpm
+	./mysql-community-server-5.7.17-1.el7.x86_64.rpm #用来提供数据库服务的软件
+	./mysql-community-test-5.7.17-1.el7.x86_64.rpm	
+
+		du -sh mysql-5.7.17.tar #这条命令可以查看这个目录大小，大概是544M
+
+		安装MySQL-server、MySQl-client软件包 ：
+			yum -y install MySQL-server MySQl-client(教学环境，这步不做，做下面那步，因为是用压缩包里提供的软件包)
+		cd到这个解压的目录里，然后			
+			yum -y install mysql-community-*.rpm  (这个是安装教学提供的软件包里的所有软件，企业环境不这么装)
+			补充命令：rpm -Uvh U选项是升级安装的意思
+			当然装完之后，就可以把压缩包里的安装包全删除了
+		rpm -qa | grep -i mysql #查看这个mysql软件是否安装了,及详细状态
+		你可以提前查看这个服务是否启动了：systemctl  status mysql
+		当然需要先启动服务才能做操作：systemctl restart mysqld   	systemctl enable mysqld
+		
+关于mysql服务的相关参数：
+		/etc/my.cnf 主配置文件 
+		/var/lib/mysql 数据库目录（存储库和表的文件夹）
+		默认端口号3306
+		进程名mysqld
+		传输协议TCP
+		进程所有者mysql （因为是RPM包，所以这一切都自动做好了）
+		进程所属组mysql
+			单独看一下进程：netstat -ntulp | grep 3306   或者 ps -C mysqld
+
+	2.修改数据库用户的root密码
+		在我们装这个5版本的数据库的时候，会有个初始密码，放在/var/log/mysqld.log日志文件里，让我们查看一下这个初始密码：
+			grep -i password /var/log/mysqld.log
+		利用查到的初始密码登陆一下数据库：
+			mysql -u root -p'过滤出的密码'	 #因为这里我们是本机登陆，所以省略了 -h localhost，也就是指定是哪里登陆的
+		退出数据库的方法：exit直接回车
+		5版本的强制要求：你不改初始化的密码，无法做任何更改数据库内容的操作！所以才让你修改root密码，且不能少于8字符，且要有特殊字符或大小写字母及数字的两种组合！
+		这个更改密码的命令是在数据库模式里输入：
+			mysql>alter user root@localhost identified by '你要改的密码'
+		改变这个密码的设置策略：
+			mysql>show variables #可以查看整个数据库的策略，加like的话就是匹配特定的字符
+			mysql>show variables like "%password%"  #来查看相关的密码设置策略
+			mysql>set global validate_password_policy=0;  	#临时设置只验证长度
+			mysql>set global validate_password_length=6；     #临时设置修改密码长度,默认值是8个字符 
+		设置完之后再设置密码，看看策略是否设置成功了：
+			mysql>alter user root@localhost identified by '你要改的密码'
+		要想永久生效，改主配置文件：
+		/etc/my.cnf 
+		在[mysqld]里写两行
+			validate_password_policy=0   
+			validate_password_length=6 
+		然后重启服务
+			可以mysql>show variables like "%password%"  #来查看相关的密码设置策略
+
+	3.确认MySQL服务程序运行、root可控：
+
+
+用户把数据存储到服务器上的流程：
+	用户需要先连接数据库服务器
+	需要在数据库里操作：
+	建库		//库类似于系统文件夹，我们要先有文件夹，也就是库，在这里面建表
+	建表		//表类似于文件系统，用来存数据
+	插入记录	//类似于文件里的内容
+	
+连接mysql数据库的方法：
+	1.安装一个软件，我们连接这个软件，这个软件给我们提供图形界面，我们在这图形里做数据的操作，然后软件连着数据库
+	2.或者连web页面，这个web页面有相关的模块可以连着数据库的
+	3.还有就是直接在本服务器，在命令行里用mysql命令的方式，直接连本机数据库
+		Linux系统里输入命令连入数据库：
+			mysql -u root -h localhost -p'密码' 库名          
+				#-h写服务器名称，写谁就是进哪个服务器的数据库里，想访问别人的数据库，需要做授权！
+				#最后的那个库名，就是进入指定服务器里的指定数据库里，不写，就哪个库都不进去
+				#一个库实际上就是这里面的一个文件夹/var/lib/mysql
+		mysql>select databases(); 	#获取并输出，当前是在哪个数据库
+	
+操作指令类型：
+	Mysql指令：环境切换、看状态、退出等控制
+	SQL指令：数据库定义、查询、操纵、授权语句
+	注意事项：
+		操作指令不区分大小写（密码和变量除外），每条sql指令要以；结尾也可以用作分隔，不支持tab补全，ctrl+c可以终止当前命令，不需要输入 ; 结尾的命令：exit
+		\h 命令用来显示帮助信息 
+SQL的操作指令分类：
+	DDL数据定义语言（create\akter\drop）
+	DML数据操作语言（insert\update\delete）
+	DCL数据控制语言(grant\revoke)
+	DTL数据事物语言(commit\rollback\savepoint)
+库管理命令：
+	\h 				#查看当前命令行状态下，的帮助信息
+	show databases;		#显示已经有的库
+	use 库名; 			#切换到指定的库
+	select database();	#查看当前所在库
+	create database 库名;   	#创建一个库
+	show tables;  		#查看表，注意，表一定要下载到指定的库里，你一定要进入到某个库里才能看表，要不就指定库名.表名！
+	drop database 库名; 	#删除库
+库的命名规则：
+	可以使用数字/字母/下划线 但不能纯数字
+	区分大小写，具有唯一性，库名不能重名
+	不可以使用指令关键字，和特殊字符
+想要在数据库里执行Linux系统命令的方法：
+	system ls /opt   #加个system，且还不用加；
+				
+
+		
+在指定库里新建表，如果已经切换到指定库下，就不用 库名. 了：
+	create table 库名.表名（	
+		字段名1 字段类型（宽度）约束条件，    
+		字段名2 字段类型（宽度）约束条件，
+		字段名N 字段类型（宽度）约束条件
+					）；
+	#字段名就是列名，字段类型是这一列的类型，是储存数字还是字符，宽度就是能存几个数字或字符，字段类型和约束条件可以省略，那就是默认的值，有一列就写一行字段名
+		例：在db1库里建表a
+		create table db1.a(name char(10),age int,sex char(10));  #char（字符） int（数字） 就是字段类型，10是允许输入的长度，char不写默认是1，
+	int类型不需要指定 宽度！因为要存很多数字！
+		当我们建表完成，也就是相当于在/var/lib/mysql/db1/a 建了这个文件
+		system ls /var/lib/mysql/db1/a 可以看下Linux系统里的对应文件
+往表里插入内容：	
+	表记录的管理命令：一条记录是文件里的一行！
+	select * from 库名.表名；  		#查看这个表里的所有列，如果想看单独一列的内容，那就把*替换成列名。
+	insert into 库名.表名 values(值列表)；	#插入表记录，表里有几列，值列表里就写几个值！每个值都是对应列的内容！
+	update 库名.表名 set 字段=值；		#修改表里指定列里的值
+	delete from 库名.表名；			#删除这个表里的所有记录	
+		例：
+		insert into a values("bob","19","boy")； #往当前库的a表里插入一行内容，对应每一列的内容是bob 19 boy，对应字段名是name age sex。
+	我们想查一列的内容，但是前提我们不知道都有哪些列，可以用下面的命令查看表的结构：
+		desc 库名.表名； 	#查看这个表都有哪些列，以及这些列的属性
+	修改一列的内容：
+		update db1.a set age=21;  				#修改db1库里的a表 将age这列的内容，全都替换成21
+		update db1.a set sex=girl where name="bob";	#修改db1库里的a表，修改sex这列内容替换成gril，不过修改的是指定行，name列内容是bob的行！
+		delete from db1.a where name="bob"; 			#删除a表里的，列内容是bob的行！不加where的条件，那就是整个表记录全删除，但是表还在！
+		drop table db1.a;						#删除整个a表！
+	我们创建一个表的时候，表记录往往要输入中文，但是默认mysql不让直接写中文，需要设置：
+		create db1.学生表（姓名 char(10),性别 char(2),住址 char(20)）default charest=utf8;  
+			#在新建表的时候，default charset就是定义字符集，utf8是万国码。然后就可以插入中文了！
+	
+Mysql数据类型：也就是字段类型！
+	常见类型如下：
+
+	1.数值型：体重、身高、成绩、工资 
+		数值类型分两类，带小数点的数也叫浮点型，和不带小数点的整数也叫整型
+		整型的分类：
+			类型		大小		范围（有符号）		范围（无符号）		用途
+			tinyint	1字节		-128～127		0～255			微小整数
+			samllint	2字节		-327698～32767	0～65535		小整数			
+			mediument	3字节		-2的23次方～		0～2的24次方减去1	中整数
+							  2的23次方减去1
+			int		4字节		-2的31次方～		0～2的32次方减去1	大整数
+							  2的31次方减去1
+			bigint	8字节		-2的63次方～		0～2的64次方减去1	极大整数
+							  2的63次方减去1
+		浮点型的分类：
+			类型		大小		范围（有符号）		范围（无符号）		用途
+			float		4字节								单精度浮点数
+			double	8字节								双精度浮点数		
+		整型的解析：以tinyint为例
+			如果你不指定这个整型数的范围，它默认是有符号的范围，也就是只能存-128到127这些数，指定无法号范围（0到255这些数）的方法：
+			create table db1.t1(age tinyint unsigned);  	写unsigned也就是指定符号范围是无符号
+			企业里一般都是直接用int并且不会指定无符号范围
+			但是当你给列指定字段类型是整型的时候，你往这列里存个小数，也能存进去，但是会自动四舍五入，变成整数！		
+				例：insert into t2 values(29.88); 也就是往第一列加入一条29.88这个数据，但是在表里显示的是30
+		浮点型解析：以float为例
+			创建一个新表，添加表字段，并且给它定义字段类型为浮点型：
+			create table db1.5(pay float(5,2));  
+			#也就是增加一列叫pay，它的字段类型是浮点型数，5是指这个数只能是5位数，其中小数占2位，其余位是整数位，也就是 999.99 这样！
+			且这个字段能存的数范围是 -999.99～999.99 ！如果你存的是个整数，系统会自动给你补两位小数点。
+			往表里加值 insert into db1.a values（11.28）；	表里就会在第一列增加一条11.28
+			企业中字段类型最好设double类型，足够大
+			
+	2.字符型：姓名、工作单位、通信住址
+		常用类型：
+			定长char(字符数)：
+				最大支持长度255字符，一个英语字母就是一个字符
+				我们定义类型的时候要指定字符数，不指定的话，默认长度就是1，如果我们指定字符长度是10时，而存不到10个字符，系统会以从右边补空格的方式，补全达到10个字符
+			  也就是你输入一个a，前面会有9个空格！
+			变长varchar（字符数）：
+				最大支持长度65532个字符
+				我们如果把字段类型设置成变长，就必须要指定字符数，否则报错，当你指定宽度是10的时候，你只输入一个字符，系统不会自动补全
+			大文本类型：text/blob
+				字符数大于65535时使用，但是生产环境里不用，因为你把大文本存到数据库，等用的时候，还要从数据库里调出来，速度太慢
+			在生产环境里：用char类型会浪费空间，但是服务器调用的性能好，用varchar省空间，但是影响服务器调用的性能，因为系统要检查varchar存的数据，
+		  它不是不补全吗，系统不知道它到底多少个数啊，所以企业里建议用char，要速度！
+			例：
+			create table db1.3(name char(10),age int);    #新建一个表3，第一列是name字符型char长度10，第二列age数值型int
+			insert into db1.3("balabala",15); 		  #在第一列加入一条balabala，在第二列加入一条内容15
+
+	3.枚举型：兴趣爱好、性别 （在列举的值里面选一个值，这就是枚举类型）
+		1）从给定的集合中选择单个值，例如性别，ENUM
+			定义格式：enmu（值1，值2，值N）
+		2）从给定的集合中选择一个或多个值，例如爱好，SET
+			定义格式：set（值1，值2，值N）
+		例：create table db1.8(sex enum("男","女"),hobby("篮球","足球","乒乓"))default charest=utf8; #创建一个表，sex列可写男可写女，
+		hobby列可写多个选项
+		然后插入表记录：insert into db1.8 values("男"，"篮球","足球","乒乓");		
+
+	4.日期时间型：出生日期、注册时间
+		日期时间，datetime
+			占用8字节
+			范围：1000-01-01 00：00：00.000000～9999-12-31 23：59：59.999999   
+			#存储格式必须是4位年2位月日，两位时分秒，存数据时不写-,系统直接判定，比如你写20190805203000就是2019-08-05 20：30：00 
+		日期时间，timestamp
+			占用4字节
+			范围：1970-01-01 00：00：00.000000～2038-01-19 03：14：07.999999	
+			#存储格式必须是4位年2位月日，两位时分秒，存数据时不写-,系统直接判定，比如你写20190805203000就是2019-08-05 20：30：00 		
+		日期时间的其它类型：一般不用上面那两种，除非你要在一列写完年月日，用上面那两种类型！
+			日期：date 	占用4字节
+				范围：0001-01-01～9999-12-31
+				#存数据时不写-,系统直接判定，比如你写20190805就是2019-08-05 
+			年份：year 	占用1字节
+				范围：1901～2155
+			时间：time	占用3字节
+				格式：hh：mm：ss
+				#存数据时不写-,系统直接判定，比如你写200800就是20：08：00
+			例：先建一个新表，给它加表字段，并给它定义字段类型
+			create table db1.2（name char(15),age tinyint unsigned,birthday date,upclass time,paty datetime,cs year）;
+			    往这个表里加记录：
+			insert into db1.2 values("bob",17,19950601,.....);	  
+
+		关于timestamp类型和datetime类型的区别：
+			1.范围之间有区别
+			2.当未给timestamp字段赋值时，可以自动以当前系统时间赋值，而datetime字段类型，你不给赋值时，默认值是null也就是空的意思，而即使是一个空格都不是空值！
+		  其它所有字段类型，在你只给一列赋值时，它们都会自动写null，除了这个timestamp这一列！
+			例：
+			create table db1.6(meeting datetime,party timestamp);
+	只给指定列加记录：insert into db1.6(meeting) values(20181001180000); #我只给meeting这列加入表记录
+			但是虽然我们只往meeting字段加入了记录，但是，party字段因为是timestamp类型，所以自动将系统的时间当作表记录写入party这列了！
+			而当我们指定给party字段插入记录时，meeting字段的表记录就变成null了：insert into db1.6(party) values(20181101180000);
+			可以select * from db1.6 ;
+		year年份字段类型的处理：
+			默认用4位数字表示。当只用两位数字赋值时，01～69视为2001～2069，而70～99视为1970～1999	
+			例：
+				create table db1.7(cs year);
+				insert into 7(cs) values(72);
+				select * from db1.7; 看到的是1972
+
+使用时间函数 获取数据赋值：也就是mysql的内置命令
+	now() 获取当前系统的日期和时间
+	year() 获取年
+	sleep(N) 休眠N秒
+	curdate() 获取当前系统的日期
+	month() 获取指定时间中的月份
+	date() 获取指定时间中的日
+	time() 获取指定时间中的时刻
+	以上函数命令常与select联用，将获取的结果直接输出：
+		例：
+		select now();  会显示当前系统的时间
+		select year( now() ); 会显示当前系统中的年
+		select month( now() ); 会显示当前系统中的月份
+		....日、时刻都可以这样套
+		select curdate();  就是用来显示当前系统中的日期
+		select curmonth(); 就是获取当前系统的月
+		select cur....();	年、时间都可以这样套
+		sleep（3） 这个就想当于linux系统中的sleep，意思就是休眠三秒，再运行什么操作。
+	我们用时间函数命令来增加表记录：insert db1.cs values(curyear());  #则将系统中的年自动作为记录写入cs列
+	
+
+	
+
+
+
+	
+				
+
+
+
+
+		
+
+

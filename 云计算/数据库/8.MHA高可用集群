@@ -1,0 +1,439 @@
+部署mysql高可用集群：MHA集群
+	先准备实验环境：
+	50机器做客户端 不需要mysql，停掉mysql
+	56做管理机器	不需要mysql，停掉mysql
+	数据库服务器 51～55 删除所有的自定义的授权用户，删除所有主从结构，准备重新搭建，删除所有自定义库，只保留初始的四个库
+	做 51～55 之间可以ssh无密码登陆，然后56可以无密码登陆51～55
+	在51～56 安装软件包 yum -y install per-*
+	真机去教师机ftp下载mha-soft-student.tar.gz这个压缩包，然后把这个压缩包传给51～56 这个软件就是高可用集群软件
+	
+	然后配置主从同步,要求如下：
+	51 主库：	
+		开半同步复制，启用主从两种角色，但是不会指定是谁的从库，因为它如果坏了，我们把它修改再加进集群里，它就做那个正在使用的主库的从库
+		做用户授权
+	52 从库（备用主库）：
+		开半同步复制	启用主从两种角色
+	53 从库（备用主库）：
+  		开半同步复制	启用主从两种角色
+	54 从库：
+		不做备用主库所以启用从库角色的半同步复制，51 52 53谁做主库，它就做谁的从库 
+	55 从库：
+ 		不做备用主库所以启用从库角色的半同步复制，51 52 53谁做主库，它就做谁的从库 
+
+	再配置MHA集群
+		
+	
+补充一个知识点：keepalived这个软件，可以对所有服务做高可用，而MHA就是专门对数据库做高可用的！
+
+		拓扑结构
+            client50
+ 
+
+            master51
+	        |
+		|
+____________________________________________
+  |		|         |         |		|
+ slave52    slave53   slave54     slave55      ，mgm56
+                                              Manager
+
+配置步骤如下：
+
+	公共配置：在所有主机上安装软件软件包
+	]# yum -y  install  perl-*.rpm
+
+	一、配置所有数据库主机之间可以互相以ssh密钥对方式认证登陆,配置manager56主机 无密码ssh登录 所有数据库主机
+		51：
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.52
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.53
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.54
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.55
+		52:
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.51
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.53
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.54
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.55
+		53:
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.51
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.52
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.54
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.55
+		54:
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.51
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.52
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.53
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.55
+		55:
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.51
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.52
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.53
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.54
+		56:
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.51
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.52
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.53
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.54
+		ssh-keygen 
+			ssh-copy-id root@172.25.4.55			
+
+	三、配置主从同步,要求如下：
+*********************51 主库：开半同步复制，启用主从两种角色，因为它如果坏了，我们把它修改再加进集群里，它就做那个正在使用的主库的从库,做用户授权***********************
+	vim  /etc/my.cnf
+	[mysqld]
+	plugin-load = "rpl_semi_sync_master=semisync_master.so;rpl_semi_sync_slave=semisync_slave.so"
+	rpl-semi-sync-master-enabled = 1
+	rpl-semi-sync-slave-enabled = 1
+
+	server_id=51
+	log-bin=master51
+	:wq
+
+	]# systemctl  restart mysqld  systemctl enable mysqld
+
+	]# ls /var/lib/mysql/master51.*
+	/var/lib/mysql/master51.000001  /var/lib/mysql/master51.index
+
+	]# mysql -uroot -p123456
+	mysql> grant  replication slave  on  *.*  to repluser@"%"  identified by "123456";
+	Query OK, 0 rows affected, 1 warning (10.04 sec)
+
+	mysql> set global relay_log_purge=off; //不允许自动删除中继日志文件，要不然万一从服务器在01中继日志里的命令还没有执行完它就给删除了不就GG了
+	Query OK, 0 rows affected (0.15 sec)		//这是命令行里的临时设置，想永久设置就去my.cnf里写一行relay_log_purge=off
+
+	mysql> show master status;
+	+-----------------+----------+--------------+------------------+-------------------+
+	| File            | Position | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
+	+-----------------+----------+--------------+------------------+-------------------+
+	| master51.000001 |      441 |              |                  |                   |
+	+-----------------+----------+--------------+------------------+-------------------+
+	mysql> quit;
+*****************************************52 从库（备用主库）：开半同步复制	启用主从两种角色************************************************************
+	vim /etc/my.cnf
+	[mysqld]
+	plugin-load = "rpl_semi_sync_master=semisync_master.so;rpl_semi_sync_slave=semisync_slave.so"
+	rpl-semi-sync-master-enabled = 1
+	rpl-semi-sync-slave-enabled = 1
+
+	server_id=52
+	log-bin=master52
+
+	]# systemctl restart mysqld  systemctl enable mysqld
+	]# ls /var/lib/mysql/master52.*
+	/var/lib/mysql/master52.000001  /var/lib/mysql/master52.index
+
+	]# mysql  -uroot  -p123456
+	mysql> set global relay_log_purge=off; //不允许自动删除中继日志文件，要不然万一从服务器在01中继日志里的命令还没有执行完它就给删除了不就GG了
+	Query OK, 0 rows affected (0.13 sec)
+
+	mysql> change master to 
+    -> master_host="192.168.4.51",
+    -> master_user="repluser",
+    -> master_password="123456",
+    -> master_log_file="master51.000001",
+    -> master_log_pos=441;
+	Query OK, 0 rows affected, 2 warnings (0.04 sec)
+
+	mysql> start slave;
+	Query OK, 0 rows affected (0.01 sec)
+
+
+	]# mysql -uroot -p123456 -e "show slave status\G"  | grep -i YES
+	mysql: [Warning] Using a password on the command line interface can be insecure.
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+***************************************************53 从库（备用主库）：开半同步复制	启用主从两种角色*******************************************************
+	]#  vim /etc/my.cnf
+	[mysqld]
+	plugin-load = "rpl_semi_sync_master=semisync_master.so;rpl_semi_sync_slave=semisync_slave.so"
+	rpl-semi-sync-master-enabled = 1
+	rpl-semi-sync-slave-enabled = 1
+
+	server_id=53
+	log-bin=master53
+	:wq
+
+	[root@db109 ~]# systemctl  restart mysqld  systemctl enable mysqld
+	[root@db109 ~]# ls /var/lib/mysql/master53.*
+	/var/lib/mysql/master53.000001  /var/lib/mysql/master53.index
+	[root@db109 ~]# 
+
+	[root@db109 ~]# mysql -uroot -p123456
+	mysql> set global relay_log_purge=off;	//不允许自动删除中继日志文件，要不然万一从服务器在01中继日志里的命令还没有执行完它就给删除了不就GG了
+	Query OK, 0 rows affected (0.14 sec)
+
+	mysql> change master  to 
+	master_host="192.168.4.51",master_user="repluser",master_password="123456",master_log_file="master51.000001",master_log_pos=441;
+	Query OK, 0 rows affected, 2 warnings (0.05 sec)
+
+	mysql> start slave;
+	Query OK, 0 rows affected (0.00 sec)
+
+	mysql> 
+
+	[root@db109 ~]# mysql -uroot -p123456 -e "show slave status\G" | grep -i yes
+	mysql: [Warning] Using a password on the command line interface can be insecure.
+             Slave_IO_Running: Yes
+             Slave_SQL_Running: Yes
+	[root@db109 ~]# 
+
+**************************************************54 从库：不做备用主库所以启用从库角色的半同步复制，51 52 53谁做主库，它就做谁的从库********************************** 
+	[root@db111 ~]# vim /etc/my.cnf
+	[mysqld]
+	server_id=54
+	:wq
+
+	[root@db111 ~]# systemctl  restart mysqld  systemctl enable mysqld
+	[root@db111 ~]# mysql -uroot -p123456
+	mysql> change master  to 
+	master_host="192.168.4.51",master_user="repluser",master_password="123456",master_log_file="master51.000001",master_log_pos=441;
+	Query OK, 0 rows affected, 2 warnings (0.09 sec)
+
+	mysql> start slave;
+	Query OK, 0 rows affected (0.00 sec)
+
+	mysql> quit;
+	Bye
+	[root@db111 ~]# 
+	[root@db111 ~]# mysql -uroot -p123456 -e "show slave status\G" | grep -i yes
+	mysql: [Warning] Using a password on the command line interface can be insecure.
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+	[root@db111 ~]# 
+********************************************55 从库：不做备用主库所以启用从库角色的半同步复制，51 52 53谁做主库，它就做谁的从库***************************************** 
+	[root@db111 ~]# vim /etc/my.cnf
+	[mysqld]
+	server_id=55
+	:wq
+
+	[root@db111 ~]# systemctl  restart mysqld  systemctl enable mysqld
+	[root@db111 ~]# mysql -uroot -p123456
+	mysql> change master  to 
+	master_host="192.168.4.51",master_user="repluser",master_password="123456",master_log_file="master51.000001",master_log_pos=441;
+	Query OK, 0 rows affected, 2 warnings (0.09 sec)
+
+	mysql> start slave;
+	Query OK, 0 rows affected (0.00 sec)
+
+	mysql> quit;
+	Bye
+	[root@db111 ~]# 
+	[root@db111 ~]# mysql -uroot -p123456 -e "show slave status\G" | grep -i yes
+	mysql: [Warning] Using a password on the command line interface can be insecure.
+             Slave_IO_Running: Yes
+            Slave_SQL_Running: Yes
+	[root@db111 ~]# 
+************************************************************************************************************************************************************************
+		在客户端测试主从同步配置：
+		 	在主库51上添加访问数据的授权用户
+	[root@db107 ~]# mysql -uroot -p123456
+	mysql> grant all on  gamedb.* to admin@"%" identified by "123456";
+	
+			在客户端主机连接主库51 建库表记录
+	mysql> create database gamedb;
+	Query OK, 1 row affected (0.01 sec)
+
+	mysql> create table  gamedb.t1 (id int);
+	Query OK, 0 rows affected (0.04 sec)
+
+	mysql> insert into gamedb.t1 values(999);
+	Query OK, 1 row affected (0.15 sec)
+
+	mysql> insert into gamedb.t1 values(999);
+	Query OK, 1 row affected (0.05 sec)
+
+	mysql> select  * from gamedb.t1;
+	+------+
+	| id   |
+	+------+
+	|  999 |
+	|  999 |
+	+------+
+	2 rows in set (0.00 sec)
+
+	mysql> 
+
+			在客户端使用授权用户连接从库52-55,也能看到同样的库表及记录
+
+	[root@host114 ~]# mysql -h从库IP地址 -uadmin -p123456
+	mysql> select  * from gamedb.t1;
+	+------+
+	| id   |
+	+------+
+	|  999 |
+	|  999 |
+	+------+
+
+***********************************************************************************************************************************************************************
+
+配置MHA集群：	
+	MHA集群介绍：
+		可以实现mysql高可用的解决方案
+		数据库的自动故障切换可以在0-30秒之内完成
+		MHA能确保在故障切换过程中保证数据的一致性，以达到真正意义上的高可用
+	MHA软件组成：
+		MHA Manger（管理节点）：可以单独部署在一台独立的机器上，管理其他节点，也可以部署在一台slave节点上，也就是56可以做代理，54和55这俩纯从也可以做，但是不安全
+		MHA Node（数据节点）：每一台在MHA集群中运行的mysql服务器,也就是51-55这些机器上装 
+	MHA工作过程：
+		由Manger定时探测集群中的master主库节点
+		当master故障时，manger自动将拥有最新数据的slave提升为新的master
+		如果51这台master崩溃了，MHA会根据51的事务日志文件判断52和53它俩，谁的数据完整性最接近51，最接近的将被选为新master
+		假如52最接近51的数据，那么53所缺失的数据，会找52要，52上面有relay log中继日志文件，它会传给53让53来完善自己的数据
+		然后MHA会根据51的事务日志二进制文件，来将52提升为新的master，让其他slave53 54 55连接52进行复制
+	配置集群：
+		在所有主机安装依赖软件包：
+			在51～56 安装软件包 yum -y install per-*   （因为这个MHA软件是用per语言编写的）
+			真机去教师机ftp下载mha-soft-student.tar.gz这个压缩包，然后把这个压缩包传给51～56 这个软件就是高可用集群软件
+			这个压缩包里还有一部分per-*包是yum源里没有提供的，也要装上！
+		简单说一下拓扑结构：
+				51 52 53这三台mysql服务器，应该共同使用一个IP，我们称之为浮动IP，因为客户端不会有感知，我们后台有3台主从服务器，它们三谁做主库的时候，
+				谁就拥有这个VIP地址172.25.4.100！这个操作是MHA负责的！
+				然后要给51-55创建授权用户！用于56监控！这个操作在51上做，这样别的机器就同步过去了:
+					grant all on *.* to root@"%" indentified by ".....";
+							
+		配置MHA集群的代理服务器：以下操作没说，就是56机器做的！			
+			安装提供管理服务的软件：
+				56代理机器安装mha4mysql-node-.... 这个包要先装再装  mha4mysql-manger-... 装这俩包
+				 mha4mysql-manger这个包安装也需要编译安装：
+					先tar -xf mha4mysql-manger-0.56.tar.gz
+					然后cd进mha4mysql-manger-0.56
+					输入perl Makefile.pl
+					再make
+					再make install
+					如果装成功了你在命令行输入masterha_然后tab两下看看有没有相关命令
+				51-55装mha4mysql-node-....这一个包
+			去代理服务器56创建服务的主配置文件
+				在mha4mysql-manger-0.56/samples/conf/目录下面有个app1.cnf模版文件
+				我们可以去创建一个目录，来放这个配置文件 mkdir /etc/mha_manager/ 然后cp mha4mysql-manger-0.56/samples/conf/app1.cnf /etc/mha_manager/
+				然后修改这个模版文件：
+					vim /etc/mha_manager/app1.cnf
+				[server default]  //这是MHA-manager管理服务的默认配置
+				manager_workdir=/etc/mha_manager 			//这是指定这个管理服务的工作目录，这个是我们创建的什么目录就写什么
+				manager_log=/etc/mha_manager/manager.log		//这是指定这个管理服务的日志文件存放的位置
+				master_ip_failover_script=/usr/local/bin/master_ip_failover  //这故障切换脚本的存储位置，这个我们得自己写，前提是这个脚本得在这里有
+				ssh_user=root //这是56管理51-55的linux系统所需的用户名，56上不是已经可以免密码登陆51-55了吗
+				ssh_port=22	//这是登陆它们时所用的是ssh方式的端口号
+				repl_user=repluser	//这是51-55主从同步时所用的用户名
+				repl_password=...		//这是51-55主从同步时所用的密码	
+				user=root			//这是56监控51-55数据库服务的监控用户
+				password=....		//这是56监控51-55数据库服务的监控密码
+
+				[server1]  //这部分是所管理的服务器，管理几个服务器写几个这个部分
+				hostname=172.25.4.51    
+				port=3306  //如果就是用的3306，这句话不写也可以
+				candidate master=1    //51要竞选主库，52，53也要竞选主库，它们三共同竞选使用VIP地址	
+				
+				[server2]  //这部分是所管理的服务器，管理几个服务器写几个这个部分
+				hostname=172.25.4.52    
+				port=3306
+				candidate master=1  
+
+				[server3]  //这部分是所管理的服务器，管理几个服务器写几个这个部分
+				hostname=172.25.4.53    
+				port=3306
+				candidate master=1  
+				
+				[server4]  //这部分是所管理的服务器，管理几个服务器写几个这个部分
+				hostname=172.25.4.54    
+				port=3306
+				no_master=1	//54和55都是纯从库，不竞选主库
+				
+				[server5]  //这部分是所管理的服务器，管理几个服务器写几个这个部分
+				hostname=172.25.4.55    
+				port=3306
+				no_master=1  
+			保存退出，然后我们要去部署事先写好的per脚本到指定位置：
+				脚本名称叫master_ip_failover,这个脚本在源码包的mha4mysql-manager-0.56/samples/scripts里，有mha提供的脚本，但是有许多要改的地方
+				所以要用教学环境提供的脚本：cp /mha-soft-student/master_ip_failover /usr/local/bin/
+				先给这个脚本赋予执行权限再改chmod +x /usr/local/bin/master_ip_failvoer
+				这个脚本主要改了一部分：不过你千万不能用mha提供的这个脚本，因为还有其他改动的地方，要用/usr/local/bin/master_ip_failvoer
+					my $vip = "172.25.4.100/24";  #这是定义浮动IP，用于51 52 53使用
+					my $key = "1";   #这是定义这个浮动IP的编号
+					my $ssh_start_vip = "/sbin/ifconfig eth0:$key $vip";  #这是给56这台机器的eth0添加IP地址，及这个IP的编号
+					my $ssh_stop_vip = "/sbin/ifconfig eth0:$key down";	#这是让56这台机器的eth0网卡编号为1的ip停掉	
+			接下来要去给51这台服务器，手动配置VIP地址172.25.4.100，因为56上的脚本只负责故障切换：
+				ifconfig eth0:1 192.168.4.100 #这是临时配置，相当于给eth0卡绑了一个编号为1的ip地址
+				ifconfig eth0:1	#然后启动编号1的网卡
+				永久配置的方法：
+			# cd /etc/sysconfig/network-scripts/
+			# cp ifcfg-eth0{,:0}   #这条命令的意思是cp eth0的配置文件，到当前位置并改名成 ifcfg-eth0:0，这个","是指的ifcfg-eth0这个模版文件
+			# vim ifcfg-eth0:0
+			DEVICE=lo:0
+			IPADDR=172.25.4.100
+			NETMASK=255.255.255.255
+			NETWORK=172.25.4.100
+			BROADCAST=172.25.4.100
+			ONBOOT=yes
+			NAME=eth0:0	
+
+			检测配置文件:
+				我们要去56主机上检测mha管理工具是否可以正常运行了：
+				masterha_check_ssh --conf=/etc/mha_manager/app1.cnf  
+				#这个命令就会去检查配置文件，检查ssh连接是否有错，如果有错误就会报错，如果最后成功就是successfully
+				masterha_check_repl --conf=/etc/mha_manager/app1.cnf
+				#这个是检查主从结构是否OK，ok会显示health is ok，
+					其中显示的信息中：
+				Dead Servers: 	Alive Servers: 	这两行分别显示集群中健康的服务器和坏掉的
+				Alive Slave0s：	是活着的从库	
+				log-bin：	这行可以看出从库找谁同步数据的	
+				如果哪一步没对，就会显示[error]对了则显示[info] info代表的是普通消息 warning也算对
+	
+			启动服务：
+				命令：masterha_manager --conf=/etc/mha_manager/app1.cnf --remove_dead_master_conf --ignore_last_failover
+				#启动服务，是根据这个配置文件启动服务的，移除down机的主服务器51 52 53谁坏了就把谁移除，并忽略8小时内不允许多次故障切换的规则！
+				#这个故障切换是mha的默认规则，你51坏了它会自动给你切换成52或者53，但是8小时内，不允许你52坏，你52坏了不给你切53，所以要忽略这个规则
+				#这个服务如果启动了，会占用一个终端，它会一直运行，不要关终端，你可以在启动服务的时候在后面加一个 & 让它后台运行，以下是服务运行显示的状态：
+					Wed Sep 19 09:50:33 2018 - [warning] Global configuration file /etc/masterha_default.cnf not found. Skipping.
+					Wed Sep 19 09:50:33 2018 - [info] Reading application default configuration from /etc/mha_manager/app1.cnf..
+					Wed Sep 19 09:50:33 2018 - [info] Reading server configuration from /etc/mha_manager/app1.cnf..
+				如果集群有什么问题，它就会自动报出相关信息
+			查看服务状态：
+				要想查看服务状态就要另外开一个终端了
+				命令：masterha_check_status  --conf=/etc/mha_manager/app1.cnf
+				ls 看一下56上的服务的文件：
+				ls /etc/mha_manager/ 下面有一个app1.master_status.health  这个文件里记录的就是主库里的健康信息 log是记录这个服务的相关日志
+			
+		配置数据库服务器
+		测试集群配置：
+			然后开50来测试一下主从同步：
+				51授权一个用户给50用，假如这个帐户是bob
+				mysql -u bob -p'123456' -h172.25.4.100  这时候50访问的就是51这台服务器
+				然后插入一个表记录试一下，看看是否5台服务器都做到主从同步了
+			测试高可用：
+				当51down了之后，客户端是否可以连接172.25.4.100数据库存取数据	
+				去51上systemctl stop mysqld
+				然后我们会发现56正在运行的mha服务停了！因为它去调脚本了！它自动把51的信息从配置文件里删除了！并且已经把51的配置清空了！
+				并且自动指定了52当主库，53 54 55都自动去改它们做52的从库了！
+			如何将坏掉的51重新加到集群里：
+				51先运行数据库服务，配置为当前主库的从库，前提是已经完全拷贝过52的数据了！
+				然后去56主机，配置56的mha配置文件vim /etc/mha_manager/app1.cnf
+				然后启动服务
+
+
+
+
+	
+

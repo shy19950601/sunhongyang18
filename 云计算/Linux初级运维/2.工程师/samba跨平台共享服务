@@ -1,0 +1,75 @@
+samba：跨平台的共享服务，可以实现windows与Linux的数据共享与传输，前提需要防火墙开启，为客户端提供共享使用的文件夹
+	服务名：smb
+	文件系统：CIFS
+smb服务搭建：
+	1.安装相关软件
+		yum -y install samba
+	2.管理smb的共享账户：将服务器现有的用户设置成smb用户，并独立设置密码，用于客户端登陆
+		先创建一个无法登陆服务器系统的用户：
+		 useradd -s /sbin/nologin harry		
+		添加用户：
+		 pdbedit -a harry
+		查询用户：
+		 pdbedit -L
+		删除用户：
+		 pdbedit -x harry
+	3.在samba服务器上创建用于共享的目录：
+		mkdir /common
+		touch /common/1.txt
+		echo 123 > /common/1.txt 
+	4.修改配置文件，让共享目录出现在共享服务站里：
+		vim /etc/samba/smb.conf
+		写入	
+		 [common] #共享目录的名称
+		 path=/common #指定共享目录路径
+		 workgroup=指定组 #定义工作组
+		 write list=haryy #只有用户harry才能有写权限
+	5.重启smb服务，并设置开机自启动
+		systemctl restart smb
+		systemctl enable smb
+	6.修改SELinux的布尔值：
+	查看SELinux的samba服务设置开关：
+	 getsebool -a | grep samba
+	 	samba_export_all_rw --> off #是否允许用户写
+		samba_export_all_ro --> off #是否允许用户读
+	修改SELinux中的samba服务布尔值开关：如果想要永久修改布尔值，需要加 -P 选项，且必须要有2G以上内存，否则会死机
+	 setsebool samba_export_all_ro on #ro的意思是只读 on即开放这个服务off是关闭
+	 setsebool samba_export_all_rw on #开启写权限
+smb服务可用的4要素：
+	1.SELinux
+	2.firewall
+	3.设置本地用于共享的文档权限
+		setfacl -m u:harry:rwx /common
+	4.服务本身的访问控制设置（配置文件中write list是否指定用户能写）
+以上操作完成，用户即可以对共享目录拥有读写操作，不想让用户有写权限，配置文件中不指定用户即可
+
+客户端想要访问服务端的samba服务所需操作（Linux端）：
+	1.安装客户端软件
+		yum -y install samba-client cifs-utils
+	2.把共享目录挂载到本地
+		vim /etc/fstab
+		 //172.25.0.11/common /mnt cifs defaults,user=harry,pass=123,_netdev 0 0
+		#//服务器地址/共享目录 /挂载点 文件系统 参数,用于登陆的用户名密码，指定这个设备是网络设备 不检查签名 不备份
+	3.挂载：mount -a
+	4.查看挂载状态：df -h
+客户端想要访问服务端的samba服务所需操作（windows端）：
+	win+r打开cmd
+	输入：
+		\\172.25.0.11
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

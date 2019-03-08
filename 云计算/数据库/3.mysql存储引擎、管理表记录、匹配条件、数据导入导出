@@ -1,0 +1,364 @@
+一、MySQL存储引擎：
+	1.什么是存储引擎：
+		存储引擎是处理表的处理器，不同的存储引擎有不同的功能和数据存储方式，存储引擎的设置也会在表结构中显示！
+		1.1）mysql服务功能模块（体系结构）：mysql数据库服务是由多个服务功能模块组成的，而存储引擎是其中之一模块，是最重要的模块功能		
+		一共有8个功能模块：
+			1）管理工具：
+				也就是mysql这个软件提供的管理命令，在linux系统里输入mysql按两下tab可以看到所有提供管理命令的文件
+				rpm -qa | grep -i mysql #可以查看所有的mysql软件
+				which mysql #可以查看mysql的管理命令是通过哪个解释器（/usr/bin/mysql）执行的
+				我们可以通过命令rpm -qf /usr/bin/mysql 查看解释器是由哪个软件包提供的
+			2）连接池：
+				当我们在服务器上想访问数据库服务的时候，或者客户端想访问数据库服务时，数据库的服务必须是开的
+				当我们数据库服务启动的时候，连接池就开始工作了，当接收到连接请求的时候，
+				首先会检查连接用户名和密码，
+				然后连接池会检查系统有没有空闲的线程响应客户端的连接，
+				然后会检查系统是否有足够的硬件资源给mysql进程使用，进程在运行的时候，不是要PID号和内存空间来调用数据吗，这是需要硬件资源提供的
+				三者同时满足，才可以使用mysql服务
+			3）sql接口：
+				我们进入数据库的时候，不是要用各种命令对数据库进行操作吗，就是由sql接口来接收我们的命令，
+				它会把我们敲的命令传递给mysql服务处理，然后再把结果输出给你
+			4）分析器：
+				我们看到的各种报错信息结果就是由它分析的并告诉我们的，如果你输入的命令没有错，它就会执行命令，执行的时候，它会调用优化器 	
+			5）优化器：
+				当我命令输入正确的时候，它会自动选择最快的方式来处理你的命令
+			6）查询缓存：
+				它是一个存储空间，存的是客户端曾经访问数据库服务器的时候，曾经查找过的数据！
+				查询缓存的空间是从数据库服务器中的物理内存中划分出来的！
+				每一个程序不都要用内存吗，当你的服务起来的时候，这个模块就会自动去你的内存中划分一块空间给mysql服务用
+				当客户执行select ...查询操作的时候，数据库服务器就会先到查询缓存中找这个数据，找到了给用户显示，然后断开连接
+				如果客户执行的是插入操作的话，就不会去查询缓存里找了，服务器就会自动找表了。
+				如果在查询缓存中找不到，服务器就会去找需要访问的表（/var/lib/mysql/....）了，找到之后，会先把找到的数据放到查询缓存里，然后再给客户
+			7）文件系统：
+				指的就是数据库服务器的硬盘！因为数据库对应的表文件不是存在硬盘里了吗
+			8）存储引擎：
+				当我们对表进行访问的时候，或者写入数据的时候，数据库服务器去找对应的表时，数据库服务就会调用表里的存储引擎对表做处理，
+				如果没有指定存储引擎，mysql服务自动给表配置一个存储引擎								
+		1.2)存储引擎详细解释：
+			当我去/var/lib/mysql下去找表时，会发现，有的表是2个表文件，有的表是3个表文件，说明每个表用的存储引擎不一样，存储方式也不一样
+			数据库软件版本不一样，默认的存储引擎也不一样：
+				mysql5.0/5.1用MyISAM
+				mysql5.5/5.6用InnoDB（这个引擎支持外键功能）			
+	2.查看数据库支持的存储引擎：
+		列出mysql服务的存储引擎 命令：show engines; （一行就是一个存储引擎）显示出的信息如下：
+			Engine列就是存储引擎的名字 
+			Support列里有default字样的是默认存储引擎，yes字样的是可以调用的存储引擎
+			Connect列是对存储引擎的描述
+			Transtation列是事物的意思，如果是YES就是支持，NO就是不支持，null就是指者行的存储引擎没这个功能，事务是什么？后面解释
+	3.查看已有的表使用的存储引擎：
+		 命令：show create table 表名； #查看建表时的命令			
+	4.设置数据库默认使用的存储引擎：
+		修改mysql服务的配置文件/etc/my.cnf，在[mysqld]里写一行： default-storage-engine=存储引擎
+		然后重启服务，别忘了开机自启动
+	5.修改已有的表使用的存储引擎，和创建表指定存储引擎：
+		创建表指定存储引擎：
+			create table 表名（字段1 字段类型（宽度）约束条件）engine=存储引擎;
+		修改已有表存储引擎：
+			alter table 表名 engine=存储引擎;    
+			！！当你表里有数据的时候，不要去修改存储引擎，因为对数据的处理方式会变！创表的时候，一定要想好
+	6.常用存储引擎的特点：
+		存储引擎对应的表文件：
+			innodb: 	表名.frm（存表结构） 	表名.ibd（存表记录，还存索引信息）
+			myisam:	表名.frm（存表结构）	表名.MYI（存索引方式，与排序之后的信息） 	表名.MYD（存表记录）
+		myisam:
+			支持表级锁 ：表级锁就是对整张表加锁！！！
+			不支持事务、事务回滚、外键！！！
+
+				事务：对数据的一次访问，也就是说对表记录执行一次查询，修改，删除，添加的动作！被称作一次事务
+				事务回滚：在执行事务操作（增删改查）时，任何一步操作失败时，就会回到最初操作，也就是表最初的状态，这个操作就是事务回滚！
+					  是通过它的事务日志文件来实现的！
+					  但是默认数据库服务的默认设置是我们按回车，命令自动提交，这样就没有办法实现数据回滚。
+				事务日志文件：记录innodb存储引擎的表执行过的文件，只有innodb引擎有。
+					       它是系统中/var/lib/mysql/ib_logfile0  /var/lib/mysql/ib_logfile0  /var/lib/mysql/ibdata1
+					       (事务日志文件是数据库服务启动时自己创建的)
+				事务特性(ACID)：因为这些特性，才能支持事务回滚！
+					1）原子性（atomic）:事务的整个操作，也就是对表做的操作，是一个整体，要么全部成功，要么全部失败
+					2) 一致性（consistency）：事务操作没有提交前，看到的就是表之前的样子。
+								      事务操作提交完后，看到的就是表改完的样子。
+								      也就是说另一个连接数据库服务的人，看到的不会是你正在修改表的实时状况！
+					3) 隔离性（isolation）：当两个用户同时访问一张表的时候，他们对表记录做各自的操作，都只有自己能看到，别人看不到，
+								   只有改完之后才能让各自看到。
+								   当然innodb引擎默认有行级锁功能，来避免两人同时修改一行数据的这种冲突！
+					4) 持久性（durability）：事务操作一旦提交，也就是说你对表或库的修改，提交了，就不可改变，会永久改变表的样子，或者库，就无法回滚了！
+				验证一下事务特性：
+					show variables like "autocommit"; 
+					#这个是查看执行指令提交状态的命令，看是ON还是OFF	 show variables; 是查看数据库变量的命令
+					set autocommit=off; 
+					#这个是关闭命令自动提交，你自动提交如果开启的话，你在数据库里面输完命令，回车就会自动提交并执行命令了！那样就无法做事务回滚了！
+					但是你修改的只是你自己终端的自动提交状态，不影响别的终端，别的终端还是自动提交！
+					rollback;   #是数据回滚命令
+					你没提交的情况下，就可以回滚，比如你误操作了，你就可以用回滚命令，回到最初状态！
+					commit;	#是提交数据的命令，你不是把自动提交关了吗，按回车是没有办法执行命令的，就要通过这个命令来实现执行！	
+					
+				行级锁：给访问的每一行表记录加锁，没有访问的行就不加锁
+				表级锁：只要访问一张表，就对整张表加锁。
+					锁的目的是解决并发访问冲突！比如有十个人一起要改同一个字段，可能改成不一样的值，这样就会冲突
+				锁类型：
+					读锁（共享锁）：也就是当PC1访问一张表做查询的时候，会自动给这个表加个读锁（myisam引擎），PC2虽然也可以做查询操作，但是不能做写操作！
+					写锁（排他锁）：如果你PC1上来就对表做更改数据的操作，就会自动给这个表加个锁（myisam引擎）
+					页级锁：是对查询缓存里的数据加锁，查询缓存中，最小一个存储单位是页，内存中的最小一个存储单元也是页！
+				查看锁信息的命令：
+					show status like "%table_lock%";   #其中 show status； 命令是查看所有状态！ like匹配要查看的条件%是模糊匹配，查包括这些字符的行
+					显示的信息中：
+					Table_locks_waited 是等着被锁的表 等着解锁的数量。
+				提示：mysql官网有所有参数的介绍，去查就可以
+		innodb:
+			支持行级锁：客户端访问表的哪一行数据，对哪一行加锁
+			支持事务、事务回滚、外键
+	7.生产环境中，建表时如何决定使用哪种存储引擎：
+		查询表记录操作(select)多的表使用mysiam存储引擎，因为节省资源
+			因为当你用户查的时候，mysiam引擎就给整个表加读锁，大家都能读，但是不能改
+			而如innodb会给每一行被访问的记录加读锁，完全没必要，这样会浪费硬件资源！
+		写表记录操作（insert update delete）多的表使用innodb存储引擎，因为并发访问量大
+			当用户要改表的时候，innodb是给被访问的行做写锁，这样就只有当前行不能被操作，别人还可以对别的行做操作，不影响彼此！
+			而mysiam是给整个表做写锁，这样当再来一个用户的时候，不管他是想查其它行还是想写其它行，都得等待前面的用户提交完执行命令才可以！这样不就极大降低了效率吗
+二、数据导入导出：
+	当外面的用户想要存储数据的时候，通过访问一个网页的方式时，会调用开发人员写好的存储数据用的脚本语言（java、python、php），
+	这个脚本里有插入表记录的命令，改表记录的命令，断开数据库连接的命令等
+	但是有一部分数据，是我们搭建网站时，就要有的数据，这时就要涉及到数据批量导入了	
+	1.检索目录：
+		在mysql5.6这个版本里，你想做导入导出的操作，数据必须存放到指定文件里才可以，到时候数据库服务会自动检索这个文件
+		查看默认检索目录
+			show variables like "secure_file_priv";   如果这""里写的不能全写清，就用% %模糊匹配查找即可
+			显示的内容如下：
+				value 这列写的就是默认存放导入导出数据的文件夹，默认是/var/lib/mysql-files
+				variable_name写的就是检索目录的变量名，默认是secure_file_priv			
+		修改默认检索目录
+			改主配置文件：vim /etc/my.cnf
+				在[mysqld]里写一行：secure_file_priv="你想存的目录"   当然你系统内得有这个文件夹，还要将这个文件夹的所有者改成mysql才行
+				用udev才能实现永久改权限，chown是临时的，太麻烦了
+				然后重启服务	
+	2.数据导入
+		实现的功能：把系统文件的内容存储到数据库服务的表里
+		命令格式：load data infile "/指定目录/文件名" into table 表名 fields terminated by "分隔符" lines terminated by "\n";
+			#你要导入的表的结构，要根据你要导入文件的内容定义，然后是指定导入的文件中每一列的分隔符是什么，然后指定每一行的换行符号是\n，\n是回车的意思，也可以定义别的
+		注意事项：字段分隔符要与文件内的一致，要指定导入文件的绝对路径，导入数据的表字段类型要与文件字段匹配，禁止使用SELinux保护机制
+		数据导入例子：
+			把/etc/passwd文件的内容存储到db3库里的user表下，并给每一行记录添加编号。
+			1.先把文件拷贝到指定目录下：
+				cp /etc/passwd /var/lib/mysql-files
+			2.根据这个文件内容创建表：root:x:0:0:root:/root:/bin/bash				
+				create table db3.user(用户名 char(35),
+							    有无密码 char(1),
+							   UID int,GID int,
+							    用户描述 varchar(100),
+							    用户家目录 varchar（100）,
+							    解释器 varchar（100）index(name))
+							   deafault charset=utf8;
+			3.将数据导入：
+				load data infile "/var/lib/mysql-files/passwd" into table db3.user fields terminated by ":" lines terminated by "\n";
+				#这样就把文件内容导入了，但是现在还缺少一个行号功能，就可以用自增长功能了：
+				alter table db3.user add id int primary key auto_increment fires;
+				#加一列叫id 数值类型 设置主键 自增长 放在第一列 ，我们之所以最后才加这列，是因为导入数据的时候，root是第一列，所以没法导入记录，只能最后增加这列
+			4.我们可以查询一下结果了：
+				select * from user where id=3;
+	3.数据导出
+		命令格式:
+			sql查询 into outfile "目录名/文件名" fields terminated by "分隔符" lines terminated by "\n";
+			#当我们对一个表做查询时（select * from 表名；或查询指定行的时候），将输出结果导入到指定检索目录里的某一个文件里，
+			这个文件不能事先创建，必须是唯一的，它会自动创建，我们自定义字段的间隔符号，自定义换行符号！
+		注意事项：
+			导出的内容由sql查询语句决定，导出的是表中的记录，不包括字段名！禁止使用SELinux！
+		数据导出例子：
+			把刚才导入的passwd内容从表里导出来
+				select * from db3.user into outfile "/var/lib/mysql-files/a1.txt";
+				#我们可以不指定列的分隔符，默认是一个tab的距离，可以不指定换行符，默认是\n回车还行！
+			也可以导出指定行的内容
+				select * from db3.user where id<=5 into outfile "/var/lib/mysql-files/a2.txt";
+				#也就是将id字段小于等于5的行导出
+				select 用户名,UID,GID,解释器 from db3.user where id<=5 into outfile "/var/lib/mysql-files/a3.txt";
+				#也就是查这几列的id小于5的行
+三、管理表记录：
+	1.增：
+		插入一行表记录，有几列写几条表记录，不写的就是空值，前提是字段的约束条件允许赋空值	
+			命令：insert into 表名 values(表记录1，表记录2,...)；
+		插入多行表记录，一行是一个空格
+			命令：insert into 表名 values(表记录1，表记录2,...),(表记录1，表记录2,...);
+		给指定列插入多行表记录
+			命令：insert into 表名(字段名1,字段名2,....) values(字段1表记录，字段2表记录,...),(字段1表记录，字段2表记录,...);
+				#其它列有默认值就赋默认值，没有默认值就赋值空值了，当然如果其它列有主键，或者约束条件不允许为空，就会报错！所以主键的列和not null的列一定要赋值！
+		注意事项：
+			字段值要要与字段类型匹配
+			对于字符类型的值要用""引起来，不引的话，就用字符的特殊含义了，如null
+			如果要一次给所有字段赋值，就不用在表名后面指定字段名
+			只给一部分字段赋值时，要在表名后面指定字段名
+	2.删：
+		删除表里所有的记录：delete from 表名；
+		删除指定记录：delete from user where gid is null; #删除user表里gid是null的行！ 
+	3.改：
+		改一整字段的值：update user set 密码="a";
+		改多列的整列值：update user set 密码="x",用户名="student user";
+		改指定列的指定行：update user set 用户名="root" where id=1; #把用户名改成root，改的是id列值是1的那一行！
+	4.查：
+		命令：
+		1. select * from 库名.表名 where 列名=你知道的列值;   #*是所有字段，任意的意思，这个命令看到的是行内容！！！
+		2. select 列名1，列名2,... from 库名.表名； #这个看到的是整列的内容！！！
+四、匹配条件：
+	你做增删改查的指定内容时需要用的匹配条件
+	1.基本条件：
+		1）数值比较：
+			规则：如果要做数值比较，要求你的字段类型必须是数值类型
+			基本格式： 
+				字段名 比较符号 数字或字段名
+				#如果你要拿两列字段名做数值比较，那么你这两列就必须是数值型  
+					例：
+					select name from user where id<=10;
+					select name,uid,gid from user where uid=gid;
+						#显示3列，要求是uid=gid的行，uid和gid都是数值类型，所以完全OK
+					但是请不要做这种操作：
+					select name,uid,gid from user where 1<2; 格式对，但是完全没意义，这样会每一行都显示，因为所有的行都满足1<2这种弱智设定！
+			比较符号：
+				=等于	>大于	>=大于等于	<小于	<=小于等于	!=不等于
+		2）字符比较/匹配空/匹配非空
+			规则：如果与字符比较，字符必须用""引起来！
+			比较符号：
+				=等于	!=不等于	is null匹配空	is not null匹配非空
+			基本格式：
+				字段名 比较符号 "字符"或字段名称或数字
+					例：
+					select 用户名,解释器 from user where 解释器="/bin/bash" ；
+					因为是做字符比较，所以字符必须要引起来，且你解释器这一列必须是字符类型！你不能拿两列不用类型的字段名做比较！！！！
+					select 用户名，解释器 from user where 解释器 is null;
+					#查两列的值，只要解释器是空值的行！
+		3）逻辑匹配
+			3.1）多个条件同时成立也叫逻辑与，用and表示
+				例：select name,uid,shell from user where name="apache" and uid=0 and shell="/bin/bash";
+					#查这3列中的指定行，要求的是name="apache" and uid=0 and shell="/bin/bash"这三个条件必须同时满足的行！
+			3.2）某一个条件成立也叫逻辑或，用or表示
+				例：select name,uid,shell from user where name="apache" or uid=0 or shell="/bin/bash";
+					#查这3列中的指定行，要求的是name="apache" and uid=0 and shell="/bin/bash"满足这三个条件之一的行都显示！
+			3.3) 逻辑非，用 ! 或 not 表示
+				例：
+				select name,uid from user where name!="apache";
+				select name,uid from user where shell is not null;
+			3.4) 提高判断条件的优先级（）跟小学里的混合运算用法一样，就是先算括号里的
+		4）范围内匹配/去重显示	
+			4.1）in 值列表 ：在值列表里
+				例：
+				字符型范围：
+					select name from user where name in("root","bob","lisi"); 
+					#我们要查name这列，给它一个范围，root,bob,lisi哪个在name列里，就给我显示其所在的哪一行！
+				数值型范围：
+					select name,shell from user where id in(1,3,7,10);
+					#我们查这两列，给它的范围是id列值是1，3，7，10这几个里面的满足的就给我显示。
+			4.2）not in 值列表 ：不在值列表里
+					select name from user where shell is not in("/bin/bash","/sbin/nologin");
+					#我们要查指定名字的用户，要求是它的shell范围是不使用/bin/bash /sbin/nologin这俩解释器的用户！
+					select name from user where id is not in(1,3,5,7);
+					#我们要查指定名字的用户，要求是它的id范围不是1.3.5.7这四个的用户！
+			4.3）between 数字1 and 数字2 ：在这俩数之间的行，要求匹配范围的字段必须是数值类型才行！
+					select * from user where id between 10 and 20;
+					#我们要查user表里，id这个字段值是10-20这些的行！
+			4.4）distinct 字段名 ：去重显示
+					select distinct shell from user;   #就是多写了个distinct
+					#我们要查看user表里的shell列里的所有值，但是如果表记录有重复，只显示第一个出现的行！
+					
+	2.高级匹配：
+		模糊查询：
+			格式：where 字段名 like '通配符'
+				其中通配符有两个：
+				1) _ 用来匹配单个字符
+					例：select name from user where name like '__';  #里面是2个_
+						#就是我要查名字这列的值！条件是，name这列里有两个字符长度的表记录，超过俩字符，也只显示前俩字符，如果不达到2字符则不会显示！
+				2) % 用来匹配0～N个字符
+					例：
+					select name from user where name like '%r%';
+						#我们要查name这一列的值，要求是，r前后有任意长度字符的值都给我显示！也就是说只要有r的值就给我显示
+					select name from user where name like 'r%';
+						#我们要查name这一列的值，要求是，r后面有任意长度字符的值都给我显示！显示出来的就是r打头的值，r前面可能还有内容，但是不会显示！
+					select name from user where name like '_%_';
+						#也就是说name这列的值只要是2个字符长度或以上的值，给我完整显示！
+		正则表达式：
+			格式：where 字段名 regexp '正则表达式'
+			正则的字符： 
+				行首^	行尾$	任意.	范围内匹配[ ]	前边的字符出现0个或多个的次数*	或者|
+			例：
+			select name from user where name regexp '^r|^a';
+				#就是查name字段的值，开启正则匹配机制，查询条件是，name字段里以r开头的或者以a开头的值给我显示出来
+			select name from user where name regexp '^r.*t$';
+				#以r开头，以t结尾，中间有0或多个字符的值！
+			select name from user where name regexp '[0-9]';
+				#这就是找name列值里有数字的值								
+		四则运算：
+			对字段值做+ - * / % 做这几种运算，前提是你字段类型要是数值类型才行！
+			例如：
+			update user set uid=uid+1 where uid <=10;	
+			#更新user表，使它的uid列里的值，都做+1运算，改的是uid<=10的那些值！
+			select name,uid,gid uid+gid ruselt from user where name="root";
+			#查name,uid,gid这三列的值，条件是name那列是root的行，并让uid那列的值和gid那列的值做加法运算，并把结果写成新的一列，新列的字段名叫ruselt
+			select name,uid,gid (uid+gid)/2 pjz from user where name="mysql";
+			#查name,uid,gid这三列的值，条件是name字段值是mysql的行，并让其uid值+gid值再除以2，结果写成新的一列，列名是pjz，
+			这里（）不就是小学里面的用法吗，这就叫提高优先级
+	3.操作查询结果
+		1) 查询结果排序(字段是数值型才有意义)
+			关键词：order by 字段名
+			格式：sql查询 order by 字段名 [asc|desc];  #asc是升序 desc是降序 不指定默认是升序！
+			例：select name,uid from user where uid betweent 10 and 1000 order by uid desc;
+				#查name,uid 从user表里，要求uid范围是10到1000的行,并使查到的行，把uid按降序显示！
+		2) 查询结果分组
+			关键词：group by 字段名
+				例：我们要查所有用户使用的shell种类，有几种！
+				select shell from user group by shell;
+				我们要查shell这列，要求是uid是10到1000的行，并且把这些行的shell，按分组显示，也就是shell值相同算一组，相同shell值只显示一个：
+				select shell from user where uid between 10 and 1000 group by shell;
+		3) 查询结果过滤
+			关键词：having 条件表达式
+				我们要查用户名，是uid 10到1000的这些用户，并从这个范围里找出叫ftp的用户
+				select name from user where uid between 10 and 1000 having name="ftp";
+		4) 限制查询结果显示行数
+			关键词：limit
+				limit n 就是显示查出来结果的前n条信息；
+				例：select name from user where uid between 10 and 1000 limit 4;
+					#就会将结果的前4行显示出来
+				limit 3,5 从第3+1行开始显示，一共显示5行，因为它查数是0开始是第一行！
+				例：select name from user where uid between 10 and 1000 limit 3,3;
+					#就是从第4行开始显示，一共显示3行！ 
+		
+			综合应用：select * from user where shell != "/bin/bash" order by uid desc limit 1;
+					#我要查不是用/bin/bash解释器的用户，并把他们按uid降序显示，只显示其结果的第一行！
+		5) 聚集函数：
+			就是mysql内置的数据统计命令
+			关键词：
+			统计字段之和：sum（字段名）字段要数值型
+				例：求字段值的总合 
+				select sum(uid) from user;
+			统计字段平均值：avg(字段名) 字段要数值型 
+				例：我们想求uid（数值类型）这个字段它所有字段值的平均值
+				select avg(uid) from user;
+			统计字段最大值：max(字段名) 字段要数值型
+				例：想知道字段中最大值是多少
+				select max(uid) from user; 
+				也可以同时查两列
+				select max(uid),min(uid) from user;
+			统计字段值个数：count(字段名)
+				例：我们想查user表里的name列里shell是/bin/bash的用户
+				select count(name) from user where shell="/bin/bash";
+				我们也可以统计表中的所有字段，一共有多少行！这不就是相当于统计这个表里有多少用户吗！
+				select count(*) from user;
+			统计字段最小值：min（字段名）字段要数值型
+				例：想知道字段中的最小值是多少
+				select min(uid) from user;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

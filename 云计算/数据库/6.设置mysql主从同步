@@ -1,0 +1,274 @@
+mysql主从同步
+	一、mysql主从同步
+		1.主从同步介绍：
+			比如我们有两台服务器，分别在两地，我们要它们这两台服务器，做到实时数据的完全一致！可比自己写得脚本精致多了！
+			至少有两台服务器，一台做主，一台做从	
+			从去同步主，客户端访问哪台服务器，哪台服务器就是主数据库服务器！
+			做单向复制，建议将从库设置成只读，如果希望主库坏掉的时候，可以让从库做主库，就不要设置可读
+		
+			大致思路是51服务器做主库，52做从库，50做客户端
+		2.主从同步原理：
+			master（主服务器）：
+				启用binlog日志 (去写配置文件server_id=50  log_bin)
+				设置server_id 
+				设置binlog日志格式 （默认不是row吗，用row就可以）
+			slave（从服务器）：
+				运行两个线程，主服务器上没这俩线程
+				1）Slave_IO:用于复制master主机的binlog日志文件里的SQL命令，到本机的relay-log文件里
+				2）Slave_SQL:执行本机relay-log文件里的SQL语句，重现Master的数据操作
+				3）并在配置文件里指定server_id
+		3.配置mysql主从同步：
+			构建思路：
+			在做主从同步前，要保证，主服务器和从服务器是一模一样的，最好是在主库开binlog日志前做完全恢复！因为从库不需要binlog！
+			如果连binlog的日志文件一起备份了，那要把它们删除
+			配置主库51服务器：
+				1.主服务器要启用binlog日志
+					vim /etc/my.cnf
+					server_id=51
+					log_bin
+					然后重启服务
+				2.主服务器要做一个授权用户，使从库服务器可以访问主库服务器
+					在主库服务器里
+					grant replication salve on *.* to bob@"%" indentified by "123456";
+					#这就是给bob用户赋予同步权限，可以同步所有库所有表，并且这个bob在哪个机器里登陆都行,密码是123456，如果有密码策略就写麻烦点！
+				3.看看你主服务器正在使用的是00000几binlog日志文件
+					show master status; 
+					#会看到在用哪个文件，偏移量是多少
+			配置从库52服务器：			
+				1.要给从服务器指定server_id 来标示从库服务器它自己，但是不用开binlog日志
+					vim /etc/my.cnf
+					server_id=52
+					然后重启服务
+				2.登陆从库，使其指定主库服务器的信息：
+					在从库数据库服务里输入命令：
+					change master to master_host='172.25.4.51', #这个是指定主服务器
+						master_user='bob',			#指定登陆用户名
+						master_password='123456',		#指定登陆主服务器的密码
+						master_log_file='localhost-binlog.000001',	#指定主服务器正在用的binlog日志文件是啥，去主服务器查看show master status;
+						master_pos=443;				#指定从主库的哪个偏移量开始记更改数据库的操作命令，绝壁不是154，因为我们做授权用户操作
+					
+					start slave;  #这条命令是启动slave进程
+					
+					然后查看slave状态（确认IO线程 SQL线程都已运行）的命令：
+						show slave status\G;
+						然后如果看到以下两行内容即可，当然还有之前配置的信息：
+							Slave_IO_running:yes  //IO线程已经运行
+							Slave_SQL_Running:yes	//SQL线程已经运行
+						如果IO是no，它的报错信息在Last_IO_Error:这行显示报错信息
+						如果SQL是no，它的报错信息在Last_SQL_Error:这行显示报错信息
+				
+					在你做完这个指定主库的这一堆命令后，系统会生成保存这些信息的文件，所以你重启服务，这个配置也依然会有效，这些文件是：
+						在/var/lib/mysql会生成4种类型的文件：
+						1）	master.info 	
+						#主库信息文件， 用来保存主库信息
+						2）	当前主机名-relay-bin.index	 
+						#中继日志索引文件，这个是记录当前服务器现有的中继日志文件的名称
+						3）	当前主机名-relay-bin.000001 
+						#中继日志文件，默认会生成俩，也只会有俩，原来的存不下时，有新生成的日志文件，就会覆盖掉老的，这个里面记得是主库binlog里记的命令！
+						4）	relay-log.info	
+						#中继日志信息文件，它会记录，我的中继日志文件是从主库哪个文件里同步命令的，从哪个偏移量开始同步，已经记录到哪个偏移量位置了！	
+				以后要开服务器，一定要51先开，52再开机！
+			现在就可以验证了：
+
+				先在51上做一些操作，比如建个表			
+				然后就可以用50连接52的数据库，来查看结果
+		4.主从同步结构模式：
+			1）一主一从：
+				你有一台主服务器，一台从服务器，就叫一主一从，其缺点就是单点故障，如果52这台从坏了，那就稀碎了
+			2）一主多从：
+				再找一台53也做51的从库！其配置方法和上面52一模一样
+				但是如果51它自己费费了，客户可以连到53或52上，做存储数据更改数据的操作，但是53和52都是独立的，它俩变成主库的时候，没有从库给它备份啊！
+			   一主多从配置方法：找一台新的虚拟机53
+				在做主从同步前，要保证，主服务器和从服务器是一模一样的，最好是在主库开binlog日志前做完全恢复！因为从库不需要binlog！
+				如果连binlog的日志文件一起备份了，那要把它们删除
+				把mysql完全备份到53主机上，记住做数据恢复的时候，一定要把数据库服务停掉！！！！
+				2.1）要给53从服务器指定server_id 来标示从库服务器它自己，但是不用开binlog日志
+					vim /etc/my.cnf
+					server_id=53
+					然后重启服务
+				2.2）登陆53从库数据库里，使其指定主库服务器的信息：
+					在从库数据库服务里输入命令：
+					change master to master_host='172.25.4.51', #这个是指定主服务器
+						master_user='bob',			#指定登陆用户名
+						master_password='123456',		#指定登陆主服务器的密码
+						master_log_file='localhost-binlog.000001',	#指定主服务器用binlog日志文件是啥
+						master_pos=443;				#指定从主库的哪个偏移量开始记更改数据库的操作命令，一定要去51上去查实时的偏移量！
+					start slave;  #这条命令是启动slave进程
+				2.3）50客户端测试验证
+			3）主从从结构：
+				就是为了解决2）的问题，即51挂了，全挂了！
+				那就是51是主数据库服务器，52和53都是51的从服务器，53服务器是在51坏掉时，做新主服务器，54做53的从服务器！
+			   主从从配置步骤：
+				3.1）53启动主库配置：
+					先启用binlog日志
+					用户授权
+					查看binlog日志信息
+				3.2）54启动从库配置：
+					指定server_id
+					再指定主库信息
+				3.3）虽然现在54是53的从库了，但是并不能同步51上的数据！就比如说51里有数据变化，53是会实时变化的，但是54不会，是需要53开启一个及联复制功能的！
+				     为啥54没有呢？因为它53搞事情，它既做了主库，又做了从库，所以54无法同步53的数据！
+					修改53的配置文件，加及联功能：
+					vim /etc/my.cnf
+					log_slave_updates  #这句话就是允许链接式复制！
+					重启服务就可以了！不用担心别的！就这么做！
+				这里补充一个知识点：/var/lib/mysql/auto.cnf文件里写的是mysql服务的UUID！如果想改UUID，不要改它长度！改完了还要重启服务！
+
+	
+			4）互为主从，也叫主主结构，两台服务器：
+				这种结构不单独使用，都是和第三方软件一起使用来做高可用集群的！
+				比如51和53，53既是它51的从库，也做51的主库，51又是它53从库，也是53的主库。
+			   这里补充一个小知识点：在数据库命令行里输入 source /root/db7.sql 可以直接执行liunx里的sql命令文件，
+						  也就是说如果那个文件里存放了sql命令，我在数据库里可以直接执行它！system是执行liunx命令，所以区分一下！	
+			   互为主从配置步骤：
+				4.1）55主机开启binlog日志
+					用户授权
+					查看binlog日志信息
+					
+					55主机指定为56主机的从库
+					指定server_id
+					再指定主库信息
+				4.2）56主机开启binlog日志
+					用户授权
+					查看binlog日志信息
+
+					56主机指定为55主机的从库
+					指定server_id
+					再指定主库信息
+				4.3）50就连接55、56 做一些更改操作，来查看55 56是否同步了
+		
+		5.主从同步常用配置参数：			
+				配置文件严格区分大小写！所以在配置文件里英文全部小写！			
+			5.1）主服务器配置参数时对所有从服务器都有效，这样可以控制从库可以同步哪个库数据
+				vim /etc/my.cnf
+				[mysqld]
+				选项=值
+					然后重启服务
+				其中里面的选项有：
+					binlog_do_db=指定库名
+					与binlog_igrone_DB=指定库名 
+				在51数据库命令行里输入命令 show master status; 我们可以看到除了偏移量还有其他的列
+					binlog_do_db  
+					#这列是说，仅允许你哪个库的数据变化可以写进binlog日志里！比如你51数库服务里有个db1库，把它设置成Binlog_Do_DB，
+					#那么binlog日志里就只会记录db1所发生的数据变化命令，别的库就不记了！这样从库服务器不也就只能同步这一个库了吗
+					binlog_igrone_db
+					#这列是不允许哪个库的数据变化写入binlog日志里，其他没写得库都可以记录！这俩选项都是单独使用的，不会一起使用！
+			5.2）从服务器配置参数时只对从服务器自己有效，就只影响自己备份什么数据
+				vim /etc/my.cnf
+				[mysqld]
+				选项=值
+					然后重启服务
+				其中里面的选项有：
+					rely_log=dbsvr2-relay-bin=指定中继日志文件名     						
+					replicate_do_db=指定库名 						
+					replicate_ignroe_db=指定库名						
+					replicate_do_table=指定表名						
+					replicate_ignroe_table=指定表名											
+				在从库服务器的数据库命令行里输入 show slave status\G; 来查看选项
+				其中包含的选项：
+					log_slave_updates
+					#开启及联复制
+					rely_log=dbsvr2-relay-bin=指定中继日志文件名     
+						#也就是最新的那俩00000几的文件，你指定了，它就用那个来记录主服务器的binlog内容了！
+					replicate_do_db=指定库名 
+						#仅同步指定库，其他库被忽略，这个库写的是主库上的库
+					replicate_ignroe_db=指定库名
+						#仅忽略指定库
+					replicate_do_table=指定表名
+						#仅同步指定表，其他表被忽略，这个表写的是主库上的表
+					replicate_ignroe_table=指定表名
+						#仅忽略指定表，这四个选项都是单独使用的，不会一起使用！
+	二、mysql主从同步的复制模式
+		1.异步复制模式：（当开启主从同步功能时，默认用的是这个模式）
+			主库执行完一次事务后，立即将结果返回给客户端，并不关心从库是否已经接收并处理
+			缺点就是，很有可能会漏掉某些数据
+		2.全同步复制
+			当主库执行一次事务时，且所有从库都执行了该事务后，才返回给客户端
+			优点就是保证了主从数据高度一致，缺点就是用户体验不好，可能要等好久
+		3.半同步复制	
+			基于前两者之间的
+			主库在执行完一次事务后，等待至少一个库接收到并写到relay log中才返回给客户端
+			
+		 配置半同步复制模式：
+			主库172.25.4.51 半同步复制模式
+				1）查看是否允许动态加载模块：
+					mysql> show  variables  like  'have_dynamic_loading';
+					显示如下： Variable_name        | Value |
+						   have_dynamic_loading | YES   |
+					默认就是允许的！如果不是yes，要用 mysql> set global have_dynamic_loading=yes; 这条命令来开启！
+				2）查看模块是否被加载：
+					mysql> select  plugin_name, plugin_status from information_schema.plugins  where plugin_name like '%semi%';		
+				3）加载半同步复制模块
+					mysql> install plugin rpl_semi_sync_master   soname   'semisync_master.so';
+					#虽然立即生效了，但是这个是临时加载主库模块
+				4）启用模块
+					set global rpl_semi_sync_master_enabled = 1;
+				5）查看是否启用模块了
+					show  variables  like  "rpl_semi_sync_%_enabled";
+				6）修改主配置文件，使其永久生效
+					vim /etc/my.cnf
+					[mysqld]
+					plugin-load=rpl_semi_sync_master=semisync_master.so #加载模块
+					rpl_semi_sync_master_enabled=1 #启用模块					
+			从库172.25.4.52 半同步复制模式
+				1）查看是否允许动态加载模块：
+					mysql> show  variables  like  'have_dynamic_loading';
+					显示如下： Variable_name        | Value |
+						   have_dynamic_loading | YES   |
+					默认就是允许的！如果不是yes，要用 mysql> set global have_dynamic_loading=yes; 这条命令来开启！
+				2）查看模块是否被加载：
+					mysql> select  plugin_name, plugin_status from information_schema.plugins  where plugin_name like '%semi%';		
+				3）加载半同步复制模块
+					mysql> install plugin rpl_semi_sync_slave soname  'semisync_slave.so';
+					#虽然立即生效了，但是这个是临时加载从库模块
+				4）启用模块
+					mysql> set global rpl_semi_sync_slave_enabled = 1;
+				5）查看是否启用模块了
+					mysql> show  variables  like  "rpl_semi_sync_%_enabled";
+				6）修改主配置文件，使其永久生效
+					 vim /etc/my.cnf
+					[mysqld]
+					plugin-load=rpl_semi_sync_slave=semisync_slave.so  #加载模块
+					rpl_semi_sync_slave_enabled=1 #启用模块
+			从库172.25.4.53 半同步复制模式
+				1）查看是否允许动态加载模块：
+					mysql> show  variables  like  'have_dynamic_loading';
+					显示如下： Variable_name        | Value |
+						   have_dynamic_loading | YES   |
+					默认就是允许的！如果不是yes，要用 mysql> set global have_dynamic_loading=yes; 这条命令来开启！
+				2）查看模块是否被加载：
+					mysql> select  plugin_name, plugin_status from information_schema.plugins  where plugin_name like '%semi%';		
+				3）加载半同步复制模块
+					mysql> install plugin rpl_semi_sync_slave soname  'semisync_slave.so';
+					#虽然立即生效了，但是这个是临时加载从库模块
+				4）启用模块
+					mysql> set global rpl_semi_sync_slave_enabled = 1;
+				5）查看是否启用模块了
+					mysql> show  variables  like  "rpl_semi_sync_%_enabled";
+				6）修改主配置文件，使其永久生效
+					 vim /etc/my.cnf
+					[mysqld]
+					plugin-load=rpl_semi_sync_slave=semisync_slave.so  #加载模块
+					rpl_semi_sync_slave_enabled=1 #启用模块
+			
+			假设我这台52服务器，既做从库，又做主库，那么我的配置文件应该这么写！让主从模块一起启用！
+			 vim /etc/my.cnf
+				[mysqld]
+				plugin-load="rpl_semi_sync_master=semisync_master.so;rpl_semi_sync_slave=semisync_slave.so"
+				#这个是同时加载主从模块
+				rpl-semi-sync-master-enabled = 1
+				#这个是启用主库半同步复制模块
+				rpl-semi-sync-slave-enabled = 1
+				#这个是启用从库半同步复制模块
+			然后重启下服务
+
+
+
+
+
+
+
+
+
+
+

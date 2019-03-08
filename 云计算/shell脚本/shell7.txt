@@ -1,0 +1,155 @@
+案例1：编写一键部署软件脚本
+要求实现以下功能：1一键安装 源码包Nginx软件 
+                   2脚本自动安装相关的软件依赖包gcc openssl-devel pcre-devel 
+                   3脚本自动判断yum是否可用
+/#! /bin/bash
+N=$(yum repolist | awk -F '/repolist/{print $2}' | sed 's/,//')  #将yum repolist的处理结果显示yum包可用数量，并去除里面的逗号
+if [ $N -gt 0 ];then 
+  echo 'yum 可用'
+else
+  echo 'yum不可用'
+  exit
+fi
+yum -y install gcc openssl-devel pcer-devel
+tar -xf /root/lnmp_soft.tar.gz    #解压这个包
+cd /root/lnmp_soft/
+tar -xf /nginx-1.12.2.tar.gz      #这个压缩包需要提前下载好lnmp压缩包，这里面提供                                        
+cd /root/lnmp_soft/nginx-1.12.2
+./config
+make && make install
+
+确认安装效果：/usr/local/nginx 下是否有/conf /html /logs Nginx /sbin
+
+****************************************************************************************************************
+
+案例2：启动脚本
+要求实现以下功能：
+脚本支持start stop restart status
+脚本支持报错提示
+脚本具备判断是否已经开启或关闭的功能
+
+netstat命令可以查看系统中启动的端口信息，该命令常用选项如下：
+-n以数字格式显示端口号
+-t显示TCP连接的端口
+-u显示UDP连接的端口
+-l显示服务正在监听的端口信息，如httpd启动后，会一直监听80端口
+-p显示监听端口的服务名称是什么（也就是程序名称）
+
+#!/bin/bash
+case $1 in 
+start)
+ /usr/local/nginx/sbin/nginx;;
+stop)
+ /usr/local/nginx/sbin/nginx -s stop;; 
+restart)
+ /usr/local/nginx/sbin/nginx -s stop;; #一定要先做这种操作，nginx无法直接restart，除非nginx已经在运行才可以
+ /usr/local/nginx/sbin/nginx 
+status)   #检测状态
+ netstat -ntulp | grep -q nginx
+ if [ $?-eq 0 ];then
+  echo "服务已开启"
+ else
+  echo "服务未启动"
+ fi;;  
+*)
+ echo Error;;
+esac 
+
+**************************************************************************************************************
+
+案例3：编写监控脚本
+要求实现以下功能：自动监控以下功能
+    CPU负载 
+    网卡流量 
+    内存剩余容量 
+    磁盘剩余容量
+    计算机账户数量
+    当前登录账户数量
+    计算机当前开启的进程数量
+    本机已安装的软件包数量
+uptime                            //查看CPU负载
+ifconfig eth0                    //查看网卡流量
+free                            //查看内存信息
+df                                //查看磁盘空间
+wc -l /etc/passwd                //查看计算机账户数量
+who |wc -l                        //查看登录账户数量
+rpm -qa |wc -l                    //查看已安装软件包数量
+
+#!/bin/bash
+ip=$(ifconfig 需要检测的网卡 | awk '/inet /{print $2}')
+echo "本地IP地址是:"$ip
+cpu=`uptime | awk '{print $NF}'`            
+#awk中NF为当前行的列数，$NF是最后一列
+echo "本机CPU最近15分钟的负载是:"$cpu
+net_in=`ifconfig eth0 | awk '/RX p/{print $5}'` 
+echo "入站网卡流量为:"$net_in
+net_out=`ifconfig eth0 | awk '/TX p/{print $5}'`
+echo "出站网卡流量为:"$net_out
+mem=`free | awk '/Mem/{print $4}'`
+echo "内存剩余容量为:"$mem
+disk=`df | awk '/\/$/{print $4}'`
+echo "根分区剩余容量为:"$disk
+user=`cat /etc/passwd |wc -l`
+echo "本地账户数量为:"$user
+login=`who | wc -l`
+echo "当前登陆计算机的账户数量为:"$login
+process=`ps aux | wc -l`
+echo "当前计算机启动的进程数量为:"$process
+soft=`rpm -qa | wc -l`
+echo "当前计算机已安装的软件数量为:"$soft
+
+*************************************************************************
+
+案例4：编写安全检测脚本
+检测ssh登陆日志 如果远程帐号登陆账户名错误3次，则屏蔽远程主机的IP
+检测ssh登陆日志 如果远程登陆密码错误3次 则屏蔽远程主机的IP
+相关功能：
+过滤帐户名失败的命令(登陆日志文件为/var/log/secure)
+ awk '/Invalid user/{print $10}' /var/log/secure  账户输入失败的行，第10列是账户名
+ awk '/Failed password/{print $11}' /var/log/secure 密码输入失败的行，第11列是账户名
+
+#!/bin/bash
+A=$(awk '/Failed password/{print $11}' /var/log/secure  | awk '{ip[$1]++}END{for(i in ip){print ip[i],i}}' | awk '$1>3{print $2}')
+#定义IP这个变量，以输出结果的第一列，即账户ip地址为数组下标，并让其+1，当再次遇到这个ip，变量值再加1，以此类推，
+然后循环这个变量里的数组下标，最后输出这个ip一共出现了几次，和ip地址，将结果处理，如果这个变量值大于3，则输出
+这个ip地址
+B=$(awk '/Invalid user/{print $10}' /var/log/secure  | awk '{ip[$1]++}END{for(i in ip){print ip[i],i}}' | awk '$1>3{print $2}')
+firewall-cmd  --permanent  --zone=block  --add-source=$A
+firewall-cmd  --permanent  --zone=block  --add-source=$B
+
+**************************************************************************************************************
+
+案例5：编写进度显示脚本
+要求实现以下功能：
+默认linux的命令不具备进度显示，用脚本实现显示进度，可以利用进度条的形式，或者显示百分比的形式
+#!/bin/bash
+jindu(){                          #这是定义shell函数
+while :
+do
+    echo -ne '\033[43m \033[0m'   #-n是横向输出，-e是输出特殊符号的含义，因为颜色里的\有意义，后面什么都没写就是代表给空格改颜色！
+        sleep 0.3
+done
+}
+jindu &
+cp -r  $1  $2
+kill $!                           #杀死最新一次启动的正在运行的进程，也就是当前这个程序！
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

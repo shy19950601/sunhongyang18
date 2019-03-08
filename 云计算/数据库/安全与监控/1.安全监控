@@ -1,0 +1,275 @@
+安全与监控_day01
+一、Linux基本防护()
+	1.1 用户管理  
+	        相关文件 /etc/passwd  /etc/shadow  /etc/login.defs   /etc/skel/*
+		相关命令 id chage   passwd 
+
+		]# id tom
+		]# useradd  tom
+		]# echo 123456  | passwd --stdin tom
+
+		]# grep  tom /etc/passwd
+		]# grep  tom /etc/shadow
+		
+		]# passwd -S tom
+		]# chage  -l tom
+		
+		]# chage   -d  0  tom
+		]# chage  -E 2019-03-31 tom
+
+		]# passwd -l tom
+		]# passwd -u tom
+
+		]# ls  -a  /etc/skel/
+		]# cp redis-4.0.8.tar.gz  /etc/skel/
+		]# useradd   jerry
+		]# echo  123456  | passwd  --stdin  jerry
+		]# su  -  jerry
+		]# pwd
+		]# ls  -a
+	1.2 隐藏系统版本和系统内核版本 （修改文件内容即可）
+		]# vim /etc/issue  本地登陆隐藏
+
+		]# vim /etc/issue.net 网络登陆隐藏
+
+		]# vim  /etc/redhat-release  记录系统版本
+
+	1.3 文件系统安全 
+		1.3.1  禁用非必要的系统服务
+  			RHEL7  ]# systemctl  disable  httpd
+			       ]# systemctl  enable   httpd
+
+			RHEL6  ]# chkconfig httpd  on
+			       ]# chkconfig httpd  off
+
+ 
+		1.3.2 锁定/解锁保护文件 charrt  lsattr
+ 
+			属性i：不可变 (vim  rm  mv )	
+			属性a：仅可追加 (>>)
+			
+			 
+	                lsattr  /etc/passwd
+			chattr +a /etc/passwd
+			chattr -a /etc/passwd
+			
+			echo  123456  > /root/test.txt
+			chattr  +i /root/test.txt
+
+二、用户切换与提权
+    2.1 用户切换 su  [-] 用户
+		 root  ---- > tom
+		 tom   -----> root
+		 tomm  -----> bob
+		 ]#su  -
+		 /var/log/secure  记录su
+
+		 tom]$  su  -  -c "touch  /root/a.txt"  root
+
+
+    2.2 用户提权 sudo ()
+	2.2.1 普通用戶查看sudo授权 ]# sudo  -l
+	2.2.2 普通用戶執行sudo授权 ]# sudo 提权命令
+
+        2.2.3 sudo授权主配置文件 /etc/sudoers
+		提權格式
+		用户      主机列表=命令列表
+		%用户zu   主机列表=命令列表
+
+	2.2.4 打開提權文件
+	]# visudo
+        :wq
+
+	]# vim /etc/sudoers
+       
+	:wq!
+
+
+	提權例子
+		1 在系統裏添加3個普通用 dachui  tiechui  niuben 並設置密碼123456
+
+		2 提權
+		]# vim  /etc/sudoers
+		92 root    ALL=(ALL)       ALL
+dachui localhost,mysql50=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * httpd		   
+
+tiechui  localhost,mysql50=/usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+
+
+niuben   localhost,mysql50=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * h
+ttpd , /usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+
+		99 #%wheel ALL=(ALL)       ALL
+:wq!
+	
+	2.2.5 sudo别名设置()
+			User_Alias  OPERATORS=jerry,tom,tsengyia
+			Host_Alias  MAILSERVERS=mail,smtp,pop,svr7
+			Cmnd_Alias  SOFTMGR=/bin/rpm,/usr/bin/yum
+   			
+			OPERATORS   MAILSERVERS=SOFTMGR
+
+
+	vim /etc/sudoers
+
+
+Cmnd_Alias      MYCMND=/usr/bin/vim /etc/httpd/conf/httpd.conf,/usr/bin/systemctl * httpd , /usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+
+Cmnd_Alias      SOFTMGM=/bin/yum , /bin/rpm
+
+Host_Alias      MYPC=localhost,mysql50
+
+dachui  MYPC=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * httpd , SOFTMGM
+
+tiechui  MYPC=/usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld , SOFTMGM
+
+# niuben   localhost,mysql50=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * httpd , /usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+
+niuben          MYPC=MYCMND , SOFTMGM , /sbin/* , !/sbin/ifconfig  eth0
+
+	2.2.6 启用日志
+		]# vim  /etc/sudoers 
+		   Defaults  logfile="/var/log/sudo"
+		:wq!
+
+三、SSH访问控制
+	]# vim  /etc/ssh/sshd_config
+				
+	:wq
+	]# systemctl restart sshd
+
+	3.1  sshd基本安全配置
+		]# vim /etc/ssh/sshd_config
+		 port  2222
+		:wq
+		]# systemctl  restart  sshd
+
+		客戶端端連接
+		 ]# ssh  -p 2222  root@192.168.4.50
+
+	3.2  sshd黑/白名单配置
+		3.2.1 白名单配置
+		      ]# vim /etc/ssh/sshd_config
+			AllowUsers  root@192.168.4.254  niuben
+			:wq
+
+		     ]# systemctl  restart  sshd
+
+		3.2.2 黑名单配置
+		    ]# vim /etc/ssh/sshd_config
+			  #AllowUsers  root@192.168.4.254  niuben
+			  DenyUsers   root  niuben  
+			:wq
+		     ]# systemctl  restart  sshd	
+
+	3.3  sshd登陸验证方式控制
+		]# vim /etc/sshd/sshd_config
+			# port 2222
+			# DenyUsers   root  niuben
+		]# systemctl restart sshd
+
+		3.3.1 口令認證登陸(默認配置)
+			65 PasswordAuthentication yes
+	
+		3.3.2 SSH密钥对验证
+			43 #PubkeyAuthentication yes
+			47 AuthorizedKeysFile      .ssh/authorized_keys
+
+		例子：配置50主机仅支持ssh密钥对认证登陆
+		    办公室电脑254 创建密钥对 并包公钥文件传给50主机
+	        	    ]# ssh-keygen
+			    ]# ssh-copy-id  root@192.168.4.50
+			    ]# ls /root/.ssh
+				公钥加密 id_rsa.pub   
+                        	私钥解密 id_rsa
+		   50主机禁止口令认证登陆 并重启ssh服务
+		       ]# vim /etc/ssh/sshd_config
+			PasswordAuthentication no
+		   	:wq
+			]# systemctl restart sshd
+		   在254 主机连接接 50主机
+			 ssh  root@192.168.4.50  允许且无需输入root密码
+			 ssh  niuben@192.168.4.50 不允许连接
+
+		   在家里的电脑上 和出差的电脑上都可以ssh 50主机
+		  	把254 主机的私钥拷贝给家里的电脑
+		  	把254 主机的私钥拷贝给出差使用的笔记本电脑 
+  		休息到 17：05
+
+四、SELinux安全防护
+	4.1 SELinux 介绍 
+		]# rpm  -qa  | grep  -i selinux
+
+	4.2 查看当前系统SElinux的状态信息 
+	[root@mysql50 ~]# sestatus 
+SELinux status:                 enabled
+SELinuxfs mount:                /sys/fs/selinux
+SELinux root directory:         /etc/selinux
+Loaded policy name:             targeted
+Current mode:                   permissive
+Mode from config file:          permissive
+Policy MLS status:              enabled
+Policy deny_unknown status:     allowed
+Max kernel policy version:      28
+
+	4.3 SELinux主配置文件
+		]# vim /etc/sysconfig/selinux
+			SELINUX=permissive 
+			SELINUXTYPE=targeted
+	4.4  设为强制模式 ]# setenforce  1
+
+	     [root@mysql50 ~]# getenforce 
+Permissive
+[root@mysql50 ~]# 
+[root@mysql50 ~]# setenforce  1
+[root@mysql50 ~]# 
+[root@mysql50 ~]# getenforce 
+Enforcing
+[root@mysql50 ~]# setenforce  0
+[root@mysql50 ~]# 
+[root@mysql50 ~]# getenforce 
+Permissive
+[root@mysql50 ~]# 
+
+
+    4.5 SELinux策略设置
+         	4.5.1 查看安全上下文
+			]# ps  aux -Z  | grep  -i  httpd
+			]# ls -ldZ /root
+			]# ls -lZ /etc/passwd
+
+		4.5.2 安全上下文
+			用户:角色:访问类型:选项
+			system_u:system_r:httpd_t:s0
+
+			system_u:object_r:admin_home_t:s0
+
+			system_u:object_r:httpd_config_t:s0
+
+
+		4.5.3 一般操作规律:
+		       新创建的文件会自动继续父目录的访问类型
+		       复制的文件会自动继承目标目录的访问类型
+		       移动的文件会keep原有的上下文属性不变
+		
+		4.5.4 修改安全上下文
+			]# chcon -t 访问类型  文件
+			]# chcon -R  -t 访问类型 目录
+
+			]# chcon  -t httpd_sys_content_t a2.html
+
+			]# chcon -R  -t httpd_sys_content_t /var/www/html
+
+		4.5.5 恢复为所在位置的默认上下文属性
+			]# restorecon /var/www/html/a2.html
+			]# restorecon -R /var/www/html
+
+
+
+
+
+
+
+
+
+

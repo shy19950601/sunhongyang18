@@ -1,0 +1,198 @@
+LNMP环境部署
+LNMP：linux nginx mariaDB PHP/Python  这些套件，这就是动态网站，只有nginx是静态网站
+
+每次访问需要服务器执行一遍代码，就是动态，即使这个页面没有变化，服务端将结果交给客户端 
+补充：PHP只能用来做网页，不能做软件开发
+     windows里的shell是bat
+       做网站主流是php和java   一部分是python 例如 知乎 豆瓣     
+所需软件：
+mariadb（客户端，服务端也得装）、mariadb-server（服务器端软件）、mariadb-devel（是依赖包）
+php、php-fpm（是解释服务）、php-mysql(扩展包)
+补充：软件的模块化设计。想用谁就下载哪个模块
+       PHP--mysql（让PHP可以连接mysql的模块功能）
+       PHP--oracle数据库   因为可能要连很多数据库，公司可能只用一种，所以那么多没用，必须要模块化
+1.使用yum安装基础依赖包
+  yum -y install gcc openssl-devel pcre-devel
+2.安装Nginx
+[root@proxy ~]# useradd -s /sbin/nologin  nginx
+[root@proxy ~]# tar -xvf nginx-1.12.2.tar.gz
+[root@proxy ~]# cd nginx-1.12.2
+[root@proxy nginx-1.12.2]# ./configure   \
+> --user=nginx   --group=nginx \
+> --with-http_ssl_module
+[root@proxy ~]# make && make install
+3.安装MariaDB
+yum -y install   mariadb   mariadb-server   mariadb-devel
+4.php和php-fpm(该软件包在lnmp_soft中提供)需要cd进入昨天解压的lnmp_soft目录下
+yum -y  install  php   php-mysql
+yum -y  install php-fpm-5.4.16-42.el7.x86_64.rpm
+5.然后新建php脚本/usr/local/nginx/html/a.php
+<?php
+$i=33;      #这两行是指令,一定要写分号，php定义变量也需要$
+echo $i;
+?>
+执行的话，前面要写php /usr/local/nginx/html/a.php
+但是这时候访问的话，会变成把这个网页下载了一遍，看到的是源代码，所以要做动静分离！
+做以下操作：
+一定要把httpd关了：systmctl stop httpd  因为apche用的也是80
+再启动nginx
+再启动mysql:
+     systemctl start  mariadb 
+     systemctl enable mariadb     
+再启动php解释器： 
+     systemctl start php-fpm 
+     systemctl enable php-fpm
+设置防火墙与SELinux（非必需操作，如果有则关闭）
+     firewall-cmd --set-default-zone=trusted
+     setenforce 0  
+都可以用netstat -ntulp | grep：80 或者 9000（php-fpm）或者 3306  查看使用的协议情况，和服务名
+
+还要改nginx配置文件：如果用户要静态页面，直接给，如果要动态页面，就交给9000端口的服务去处理。
+利用的就是配置文件里的location实现这两分支功能
+
+用户访问/下的是静态页面   访问.php下的页面是动态
+
+FastCGI技术点补充：
+是一种转译器！linux本身无法翻译php语言，由FastCGI技术进行转译，将FastCGI写入FPM解释器，实现linux与nginx互通！注意，FastCGI的内存消耗问题，一个PHP-FPM解释器将消耗约25M的内存。
+
+以下是静态页面：
+  server {
+        listen       80;
+        server_name            www.c.com;
+        location / {     # / 是指根网页目录，可以匹配一切，但是这个优先级最低，Location就是匹配用户的地址栏
+            root   html;
+            index  index.html index.htm;
+        }
+#以下是同www.c.com域名但是结尾以.php结尾的网页设置，也就是动态网页，当然用户输入的必须是www.c.com/index.php                 
+        location  ~  \.php$  {   # ~符号代表开启正则匹配   \是转译.否则会被当作正则的任意字符  也就是以所有以.php结尾的网页都给这个server写的内容  
+            root           html;
+            index          index.php;
+            fastcgi_pass   127.0.0.1:9000;    #将请求转发给本机9000端口也就是PHP解释器php-fpm
+            fastcgi_index  index.php;  
+            #fastcgi_param  SCRIPT_FILENAME  /scripts$fastcgi_script_name;    这一行要注释掉       
+            include        fastcgi.conf;      #启用调用文件fastcgi.conf，这里面写的是内置变量,以前的错了
+        }
+
+Nginx是利用多进程功能，将客户的访问请求交给多个PHP解释器处理，php-fpm处理完再返回给nginx。（Nginx配置文件支持正则表达）
+以下几点需要明白：
+           多进程的程序：开启多个程序的进程
+           程序：APP没启动之前，在硬盘上
+           进程：正在执行的程序 好多人同时看好多页面，只有多进程才能做到，否则是看完一个关了才能看别的。进程占用的是内存
+           线程：可以在进程底下再启动多个线程去做进程的工作细致划分。共享进程占用的内存。
+           可以利用ps aux | grep php 查看进程的状态       
+这时候要配置php-fpm配置文件来配合Nginx（实验中不需要修改该文件）
+[root@proxy etc]# vim /etc/php-fpm.d/www.conf
+[www]
+listen = 127.0.0.1:9000            //指定PHP服务的端口号
+pm.max_children = 32               //允许开启最大进程数量
+pm.start_servers = 15              //默认就开启的最小进程数量
+pm.min_spare_servers = 5           //最少需要几个待命的进程，因为启动进程也需要时间
+pm.max_spare_servers = 32          //最多允许几个进程处于空闲状态
+
+总结部署lnmp的3步骤
+1.安装nginx mariadb php等
+2.启动3个服务
+3.修改nginx配置文件改两行，和php-fpm配置文件
+
+******************************************************************************************************************************
+
+排错！
+Nginx的默认访问日志文件为/usr/local/nginx/logs/access.log
+
+Nginx的默认错误日志文件为/usr/local/nginx/logs/error.log
+
+PHP默认错误日志文件为/var/log/php-fpm/www-error.log
+
+如果动态网站访问失败，可用参考错误日志，查找错误信息。
+tail  命令默认看最后十行
+tailf /usr/local/nginx/logs/error.log 可以实时看nginx错误日志，再有错误发生，会弹出信息
+常见3种错误
+没启动某个服务
+nginx自己的配置错了
+网页文件的语法错了  这种错误不会有日志提示
+
+************************************************************************************************************
+
+目前数据库功能没有体现！要让PHP支持数据库！这个功能在lnmp里的php_scripts里，叫mysql.php 拷贝到网站根目录底下
+然后客户输入www.a.com/mysql.php  验证即可 
+如果对方敲ip地址不敲域名。就遵循匹配及停止，只打开第一个server！
+
+*************************************************************************************************************
+
+地址重写！rewrite 
+用户输入的域名360buy，被重写成了jd！
+http：//baidu      https：//baidu
+或者文件不在了，换位置了
+因为没有人会去打https 所以用地址重写功能
+每次修改完配置文件别忘了重启动服务
+
+案例1：当用户访问www.a.com/a.html的时候，自动跳到www.a.com/b.html
+修改nginx配置文件
+  在servername www.a.com;
+  下面加一行
+ rewrite /a.html /b.html;  #别忘了写一个b.html在网站根目录里
+
+第二种，域名跳www.a.com以及下面的所有页面都跳到tmooc.cn
+在servername www.a.com;加一行
+rewrite     ^/      http://www.tmooc.cn;    #一个旧地址（支持正则表达式）这个/是指在地址栏输入的所有以www.a.com开头的地址都跳到 www.tmooc.cn 这个域名里      
+
+第三种，访问www.a.com老域名下的子页面，会跳到新域名里名称一样的子页面， 就需要正则 () 了 
+在servername www.a.com;加一行
+rewrite ^/(.*)  http://www.tmooc.cn/$1   #找到所有以根目录开头的行，将根后面的所有复制，然后粘贴，这里\1用$1表示 nginx自己的规则 
+
+第四种，电脑打开www.sina.com/x       电脑打开是宽屏
+         手机打开www.sina.com/x       手机打开是窄屏
+        最终显示的结果不一样,前提有两套页面
+在servername www.a.com;里写
+
+实现其他浏览器和火狐浏览器访问相同链接返回的页面不同(可以基于手机，浏览器)
+先准备两个页面，当用户在不同浏览器输入www.a.com/a.html反还不同页面
+/usr/local/nginx/html/phone/a.html    文件名一样，让人觉得是一个页面
+/usr/local/nginx/html/a.html
+
+想要实现上述功能需要，以下相关知识的协助：
+需要nginx的日志文件/usr/local/nginx/logs/access.log 
+关于日志文件显示的内容，它的所有含义，都在nginx的配置文件里定义了
+以下是nginx配置文件定义的日志文件每一列的含义
+log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                  '$status $body_bytes_sent "$http_referer" '
+                  '"$http_user_agent" "$http_x_forwarded_for"';
+ 1.远程访问我们nginx的ip地址  2.-  3.访问我们nginx的客户端用户名-代表没有用户名  4.[ 本地时间 ]    5.客户请求什么页面  
+ 6.状态是什么样200代表一切正常404是找不到页面  7.这个页面有多少字节  8.没有的时候是-  原意思是从哪个链接过来的（例如百度搜索新浪）如果百度要钱，这个是参考依据   9.代表客户端的用户信息包含用户操作系统，用户浏览器
+利用第9条，标示功能，来实现功能要求
+怎么写规则：
+     server {
+        listen   80;
+        server_name  www.a.com;
+        if ($http_user_agent ~* firefox) {  #如果是对应标示firefox，就执行地址重写，不管访问根网站下面哪个子页面，都跳转到firefox目录下的对应子页面。～代表的就是开启正则匹配   *在nginx里是不区分大小写    
+        rewrite ^/(.*) /phone/$1;                 
+        }
+        location / {
+            root   html;
+            index  a.html;
+        }
+    }
+  
+题外：用户标示：用户使用浏览器时，可以更改自己的系统是手机或者是电脑端，伪装
+      只要用户访问首页，就会默认先访问一遍favicon.ico这个文件对应的是就是在地址栏中的网站logo
+
+rewrite 旧地址 新地址 [选项];
+选项含义：
+          last 不再读其他rewrite
+          break 不再读其他语句，结束请求
+          redirect 临时重定向
+          permament 永久重定向
+
+例：rewrite /a.html /b.html last; 
+   rewrite /b.html /c.html;        不写last，访问a时会出现c里的页面，写了之后就只会出现b的内容，当然如果访问b的话，还会进入c的页面
+例：location /a.html {
+    rewrite /a.html /b.html break;  不写break，只写last就没用了，因为location会强制执行，break就退的很彻底！当然访问b.html还可以进入/c.html
+   location /b.html  {
+    rewrite /b.html /c.html;  
+例：rewrite /a.html /b.html redirect;
+                           permanment;告诉别人，a.html不会回来了，但是其实没卵用，用户根本看不到，
+                                   是给搜索引擎看的，它把里面的内容记录下来，如果是临时就不会改，后面写了永久就会改。   
+   
+
+
+

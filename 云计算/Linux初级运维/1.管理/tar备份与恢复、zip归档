@@ -1,0 +1,26 @@
+Linux常见的压缩格式及对应的工具：
+	（压缩格式）.gz——>gzip（工具）  .bz2——>bzip  .xz——>xz
+
+tar命令打包的完整格式：
+	创建压缩包：tar -c
+		创建压缩包与3个命令连用
+		z j J
+		z支持.gz压缩格式：tar -zc
+		j支持.bz2压缩格式：tar -jc
+		J支持.xz压缩格式 : tar -Jc
+	释放压缩包：tar -x
+	该选项必须加，指定压缩包名称，必须放在所有选项最后：tar -f
+	显示压缩包里的清单：tar -t
+	指定压缩包的释放路径：tar -xf 压缩包路径 -C 指定释放的路径
+新建压缩包：
+	tar -zcf 1.tar.gz /opt/{a,b}  	#将/opt下的a和b文件打包，压缩包的名称叫1.tar.gz
+	tar -jcf 2.tar.bz2 /opt/c	#将/opt下的c打包，压缩包名称叫2.tar.bz2
+	tar -Jcf 3.tar.xz /opt/d 	#将/opt下的d打包，压缩包名称叫3.tar.xz
+释放压缩包：
+	tar -xf 压缩包绝对路径 -C 释放的路径
+显示tar包的数据：
+	tar -tf 压缩包绝对路径 
+	
+Zip归档工具：这种归档，是可以跨平台的
+	压缩的命令：zip -r 备份名.zip 被归档的文档
+	解压的命令：unzip 备份名.zip -d 指定释放路径 	

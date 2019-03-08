@@ -1,0 +1,19 @@
+NFS（网络文件系统）协议可以将指定文件共享给客户端
+	文件系统：NFS
+服务器端部署NFS协议：
+	1.安装所需软件：yum -y install nfs-utils rpcbind
+	2.在指定位置创建共享目录：mkdir /nfs
+	3.修改配置文件：vim /etc/exports
+		写入
+		/nfs /172.25.0.0(ro)
+		#指定共享目录路径 允许哪个网段的客户端访问 ro是只对这个网段用户开启读权限
+	3.给共享目录设置可读权限chmod ugo=r /nfs 
+	4.重启nfs，并开机自启
+		systemctl restart nfs
+		systemctl enable nfs
+客户端访问NFS共享目录：需要先把服务器端的共享目录挂载到本地，才可以访问
+	vim /etc/fstab
+		172.25.0.11:/nfs /mnt nfs defaults,_netdev 0 0
+	然后mount -a
+	
+

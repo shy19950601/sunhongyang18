@@ -1,0 +1,430 @@
+关于集群软件：
+nginx功能强大，web，代理，调度器，健康检查，支持正则
+LVS功能少，集群调度器，问题少！但是缺一个核心功能，健康检查！一但一台子服务器崩了，该转给它还给它，就会造成直接给客户看404，尴尬....
+该怎么解决LVS的健康检查问题呢？
+可以写脚本：默认LVS不带健康检查功能，需要自己手动编写动态检测脚本，实现该功能：(参考脚本如下，仅供参考) 这个脚本写在调度器里执行，不能用ping写脚本哦，因为如果服务关了，还是能ping通
+ vim check.sh
+#!/bin/bash
+VIP=192.168.4.15:80
+RIP1=192.168.4.100
+RIP2=192.168.4.200
+while :
+do
+   for IP in $RIP1 $RIP2
+   do
+    curl -s http://$IP &> /dev/vnull     #curl -s是不输出结果的访问网站 
+if [ $? -eq 0 ];then
+            ipvsadm -Ln | grep -q $IP || ipvsadm -a -t $VIP -r $IP     #grep -q是查完了之后不输出到屏幕上
+        else 
+            ipvsadm -Ln | grep -q $IP && ipvsadm -d -t $VIP -r $IP
+        fi
+   done
+sleep 1
+done
+脚本含义：死循环，访问网站如果成功，那么就在集群里加服务器，不成功就从集群里删除服务器
+ 但是这种健康检查，还是特么有缺陷，如果网站被攻击了呢？还是能访问网站的阿....可以将访问结果用md5算一下，并取最后这一行md5码，如果md5码发生变化了，说明被攻击了
+ 然后可以把这个脚本设置成开机启动项，自己改systemctl 下的service文件 
+
+也可以用keepalived软件 
+ 1.写配置文件，自动执行ipvsadm配置集群
+ 2.健康检查（支持URL和TCP的检查）
+ 3.浮动VIP 相当于思科路由器里的HSRP
+
+接下来看看怎么用keepalived实现浮动VIP，不考虑集群，单纯来看keepalivd的浮动vip功能
+环境要求：客户端访问两台拥有相同网段的VIP服务器web1 web2  ，VIP是keepalived自己配的，你别动
+web1 web2先安装软件
+yum install -y keepalived
+部署Keepalived服务修改web1 web2服务器Keepalived配置文件
+ vim /etc/keepalived/keepalived.conf
+global_defs {     //全局设置
+  notification_email {
+    admin@tarena.com.cn                //设置报警收件人邮箱，添谁，谁就能能收到邮件
+  }
+  notification_email_from ka@localhost    //设置发件人
+  smtp_server 127.0.0.1                //定义邮件服务器
+  smtp_connect_timeout 30              //邮件连接的超时时间
+  router_id  web1                      //设置路由ID号（实验需要修改）
+}
+vrrp_instance VI_1 {                //虚拟路由热备协议
+  state MASTER               //主服务器为MASTER（备服务器需要修改为BACKUP）但是这个不能完全决定，真正能决定的是靠优先级，这个只能决定初始的情况谁主谁备份
+  interface eth0                    //你写哪张网卡，就给哪张网卡设置VIP，而且不会覆盖网卡的原有IP，是像之前：0那种另外设置
+  virtual_router_id 50             //主备服务器VRID号必须一致数字是啥无所谓，因为你公司可能不只一个集群，这样可以避免冲突
+  priority 100                     //服务器优先级,优先级高优先获取VIP（实验需要修改），当这个没有配置，就会根据哪台服务器的ip和mac地址大，谁就是主，但是一定要配！
+  advert_int 1        //每隔一秒，它们俩对比一下优先级
+  authentication {
+    auth_type pass          //密码
+    auth_pass 1111          //主备服务器密码必须一致，在对比优先级以前会先对一下密码，1111是默认密码，全世界都一样，一定要改！
+  }
+  virtual_ipaddress { 192.168.4.80  }    //这个是要给他们设置的VIP
+}                  
+keepalived的功能是可以单独用的，把其它功能先删除。
+做完上述步骤，再去web2去做一遍修改，注意 主从服务器/优先级/ 要修改
+
+两个配置文件改完了，要启动服务，但是特么当你启动的时候，会自动加一个防火墙规则！这个规则是丢弃所有数据包，所以特么的要清空这个规则！
+[root@web1 ~]# systemctl start keepalived
+[root@web2 ~]# systemctl start keepalived
+[root@web1 ~]# iptables -F  这是清空防火墙规则  
+[root@web1 ~]# setenforce 0 设置selinux
+[root@web2 ~]# iptables -F   
+[root@web1 ~]# setenforce 0
+
+客户端可以访问curl http：//192.168.4.80测试了，注意目前是没有调度器的哦，就是keepalived的功能哦  
+______________________________________________________________________________________________________________
+
+验证完了，web1 web2都关了keepalived，进行下一个实验自动配置LVS集群，是基于DR做的
+使用Keepalived为LVS调度器提供高可用功能，防止调度器单点故障，为用户提供Web服务：
+创建2台LVS调度器
+LVS1调度器真实IP地址为192.168.4.5  
+LVS2调度器真实IP地址为192.168.4.6/24  给一个新的虚拟机配这个eth0的IP 配yum源
+服务器VIP地址设置为192.168.4.15 这个VIP是keepalived自动配置的
+真实Web服务器地址分别为192.168.4.100、192.168.4.200，并给其设置隐藏的本地回环网卡的ip lo：0 4.15
+使用加权轮询调度算法，真实web服务器权重不同
+先把proxy的VIP删除 rm -rf ifcfg-eth0:0  再systemctl restart network
+
+步骤一：配置网络环境
+1）设置Web1服务器的网络参数
+[root@web1 ~]# nmcli connection modify eth0 ipv4.method manual \
+ipv4.addresses 192.168.4.100/24 connection.autoconnect yes
+[root@web1 ~]# nmcli connection up eth0
+接下来给web1配置VIP地址
+注意：这里的子网掩码必须是32（也就是全255），网络地址与IP地址一样，广播地址与IP地址也一样。
+[root@web1 ~]# cd /etc/sysconfig/network-scripts/		#所有网卡的配置文件都在这
+[root@web1 ~]# cp ifcfg-lo{,:0}   #这个部分的内容前面讲过。
+[root@web1 ~]# vim ifcfg-lo:0
+DEVICE=lo:0
+IPADDR=192.168.4.15
+NETMASK=255.255.255.255
+NETWORK=192.168.4.15
+BROADCAST=192.168.4.15
+ONBOOT=yes
+NAME=lo:0
+注意：这里因为web1也配置与调度器一样的VIP地址，默认肯定会出现地址冲突。
+写入这四行的主要目的就是访问192.168.4.15的数据包，只有调度器会响应，其他主机都不做任何响应。
+[root@web1 ~]# vim /etc/sysctl.conf
+#手动写入如下4行内容
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.lo.arp_ignore = 1
+net.ipv4.conf.lo.arp_announce = 2
+net.ipv4.conf.all.arp_announce = 2
+#当有arp广播问谁是192.168.4.15时，本机忽略该ARP广播，不做任何回应
+#本机不要向外宣告自己的lo回环地址是192.168.4.15
+重启网络服务，设置防火墙与SELinux
+[root@web1 ~]# systemctl restart network
+[root@web1 ~]# ifconfig
+[root@web1 ~]# systemctl stop firewalld
+[root@web1 ~]# setenforce 0
+2）设置Web2服务器的网络参数
+[root@web2 ~]# nmcli connection modify eth0 ipv4.method manual \
+ipv4.addresses 192.168.4.200/24 connection.autoconnect yes
+[root@web2 ~]# nmcli connection up eth0
+接下来给web2配置VIP地址
+注意：这里的子网掩码必须是32（也就是全255），网络地址与IP地址一样，广播地址与IP地址也一样。
+[root@web2 ~]# cd /etc/sysconfig/network-scripts/
+[root@web2 ~]# cp ifcfg-lo{,:0}
+[root@web2 ~]# vim ifcfg-lo:0
+DEVICE=lo:0
+IPADDR=192.168.4.15
+NETMASK=255.255.255.255
+NETWORK=192.168.4.15
+BROADCAST=192.168.4.15
+ONBOOT=yes
+NAME=lo:0
+注意：这里因为web2也配置与代理一样的VIP地址，默认肯定会出现地址冲突。
+写入这四行的主要目的就是访问192.168.4.15的数据包，只有调度器会响应，其他主机都不做任何响应。
+[root@web2 ~]# vim /etc/sysctl.conf
+#手动写入如下4行内容
+net.ipv4.conf.all.arp_ignore = 1
+net.ipv4.conf.lo.arp_ignore = 1
+net.ipv4.conf.lo.arp_announce = 2
+net.ipv4.conf.all.arp_announce = 2
+#当有arp广播问谁是192.168.4.15时，本机忽略该ARP广播，不做任何回应
+#本机不要向外宣告自己的lo回环地址是192.168.4.15
+重启网络服务，设置防火墙与SELinux
+[root@web2 ~]# systemctl restart network
+[root@web2 ~]# ifconfig
+[root@web2 ~]# systemctl stop firewalld
+[root@web2 ~]# setenforce 0
+3）配置proxy1主机的网络参数(不配置VIP，由keepalvied自动配置)
+[root@proxy1 ~]# nmcli connection modify eth0 ipv4.method manual \
+ipv4.addresses 192.168.4.5/24 connection.autoconnect yes
+[root@proxy1 ~]# nmcli connection up eth0
+4）配置proxy2主机的网络参数(不配置VIP，由keepalvied自动配置)
+注意：按照前面的课程环境，默认没有该虚拟机，需要重新建一台虚拟机proxy2。
+[root@proxy2 ~]# nmcli connection modify eth0 ipv4.method manual \
+ipv4.addresses 192.168.4.6/24 connection.autoconnect yes
+[root@proxy2 ~]# nmcli connection up eth0
+
+步骤二：配置后台web服务
+1）安装软件，自定义Web页面（web1和web2主机）
+[root@web1 ~]# yum -y install httpd
+[root@web1 ~]# echo "192.168.4.100" > /var/www/html/index.html
+[root@web2 ~]# yum -y install httpd
+[root@web2 ~]# echo "192.168.4.200" > /var/www/html/index.html
+3）启动Web服务器软件(web1和web2主机)
+[root@web1 ~]# systemctl start httpd ; systemctl enable httpd
+[root@web2 ~]# systemctl start httpd ; systemctl enable httpd
+
+步骤三：proxy proxy2调度器安装Keepalived与ipvsadm软件
+ 
+[root@proxy1 ~]# yum install -y keepalived
+[root@proxy1 ~]# systemctl enable keepalived
+[root@proxy1 ~]# yum install -y ipvsadm
+[root@proxy1 ~]# ipvsadm -C
+[root@proxy2 ~]# yum install -y keepalived
+[root@proxy2 ~]# systemctl enable keepalived
+[root@proxy2 ~]# yum install -y ipvsadm
+[root@proxy2 ~]# ipvsadm -C
+
+步骤四：部署Keepalived实现LVS-DR模式调度器的高可用
+1）LVS1调度器设置Keepalived，并启动服务
+[root@proxy1 ~]# vim /etc/keepalived/keepalived.conf
+global_defs {
+  notification_email {
+    admin@tarena.com.cn                //设置报警收件人邮箱
+  }
+  notification_email_from ka@localhost    //设置发件人
+  smtp_server 127.0.0.1                //定义邮件服务器
+  smtp_connect_timeout 30
+  router_id  lvs1                        //设置路由ID号(实验需要修改)
+}
+vrrp_instance VI_1 {
+  state MASTER                             //主服务器为MASTER
+  interface eth0                        //定义网络接口
+  virtual_router_id 50                    //主辅VRID号必须一致
+  priority 100                         //服务器优先级
+  advert_int 1
+  authentication {
+    auth_type pass
+    auth_pass 1111                       //主辅服务器密码必须一致
+  }
+  virtual_ipaddress {  192.168.4.15  }   //配置VIP（实验需要修改）
+}
+virtual_server 192.168.4.15 80 {    //sever相当于昨天的-A选项  设置ipvsadm的VIP规则（实验需要修改）
+  delay_loop 6
+  lb_algo wrr                          //设置LVS调度算法为WRR  -s
+  lb_kind DR                           //设置LVS的工作模式为DR  -g
+  #persistence_timeout 50
+  #注意这行的作用是保持连接，开启后，客户端在一定时间内始终访问相同服务器 50秒以内一直都是这个服务器，为了看实验效果，所以把它注释，它像那个ip_hash
+  protocol TCP     //相当于昨天打的小t
+  real_server 192.168.4.100 80 {         //设置后端web服务器真实IP（实验需要修改）
+    weight 1                             //设置权重为1
+    TCP_CHECK {          //对后台real_server做健康检查，检查端口是否可用
+    connect_timeout 3    //连接超过3秒没反应就算坏了
+    nb_get_retry 3       //反复测3次
+    delay_before_retry 3  //每隔3秒做一次检查
+    }
+  }
+ real_server 192.168.4.200 80 {       //设置后端web服务器真实IP（实验需要修改）
+    weight 2                          //设置权重为2
+    http_check {    //健康检查网页，看你某个网页是否OK
+       url{     //一个url是访问一个网页，可以写多个url哦
+     path /b.html    //url测试/b.html这个网页，绝对路径哦
+     digest fao19u2faawjsf9c4f6a482dc   //看md5是否变化了，来判断网页是否发生变化，这个md5码是自己用md5 /b.html访问测试完粘贴过来的    
+               }      
+    connect_timeout 3
+    nb_get_retry 3
+    delay_before_retry 3
+    }
+  }
+}
+
+其它的内容全删除
+
+[root@proxy1 ~]# systemctl start keepalived
+还要清防火墙 iptables -F 
+[root@proxy1 ~]# ipvsadm -Ln                     #查看LVS规则
+[root@proxy1 ~]# ip a  s                          #查看VIP配置
+
+2）LVS2调度器设置Keepalived，操作原理同上，可以直接用SCP命令拷贝到proxy2上再做修改
+[root@proxy2 ~]# vim /etc/keepalived/keepalived.conf
+global_defs {
+  notification_email {
+    admin@tarena.com.cn                //设置报警收件人邮箱
+  }
+  notification_email_from ka@localhost    //设置发件人
+  smtp_server 127.0.0.1                //定义邮件服务器
+  smtp_connect_timeout 30
+  router_id  lvs2                        //设置路由ID号（实验需要修改）
+}
+vrrp_instance VI_1 {
+  state BACKUP                          //从服务器为BACKUP（实验需要修改）
+  interface eth0                        //定义网络接口
+  virtual_router_id 50                    //主辅VRID号必须一致
+  priority 50                             //服务器优先级（实验需要修改）
+  advert_int 1
+  authentication {
+    auth_type pass
+    auth_pass 1111                       //主辅服务器密码必须一致
+  }
+  virtual_ipaddress {  192.168.4.15  }  //设置VIP（实验需要修改）
+}
+virtual_server 192.168.4.15 80 {          //自动设置LVS规则（实验需要修改）
+  delay_loop 6
+  lb_algo wrr                          //设置LVS调度算法为WRR
+  lb_kind DR                               //设置LVS的模式为DR
+ # persistence_timeout 50
+#注意这样的作用是保持连接，开启后，客户端在一定时间内始终访问相同服务器
+  protocol TCP
+  real_server 192.168.4.100 80 {        //设置后端web服务器的真实IP（实验需要修改）
+    weight 1                              //设置权重为1
+    TCP_CHECK {                         //对后台real_server做健康检查
+    connect_timeout 3
+    nb_get_retry 3
+    delay_before_retry 3
+    }
+  }
+ real_server 192.168.4.200 80 {         //设置后端web服务器的真实IP（实验需要修改）
+    weight 2                              //设置权重为2
+    TCP_CHECK {
+    connect_timeout 3
+    nb_get_retry 3
+    delay_before_retry 3
+    }
+  }
+[root@proxy2 ~]# systemctl start keepalived
+[root@proxy2 ~]# ipvsadm -Ln                 #查看LVS规则
+[root@proxy2 ~]# ip  a   s                    #查看VIP设置
+还要清防火墙：iptables -F 
+
+然后可以关web1或者web2的http  在proxy1或2上输入ipvsadm -Ln来看高可用效果
+
+————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+
+接下来看Haproxy集群调度器！
+Haproxy和nginx都支持4层和7层调度 7层里如【session,cookie,地址重写里面还能支持正则】
+Nginx的功能还是比Haproxy功能多，Haproxy只能做代理服务器，它不能做网站
+当然还有个比较牛B的集群调度器硬件！是F5的BIG-ip   越底层的性能越好，但是功能来说也越少
+
+将前面实验VIP、LVS等实验的内容清理干净！！！！！！
+删除所有设备的VIP，清空所有LVS设置，关闭keepalived！！！
+web1关闭多余的网卡与VIP，配置本地真实IP地址。
+[root@web1 ~]# ifdown eth0
+[root@web1 ~]# ifdown lo:0
+[root@web1 ~]# nmcli connection modify eth1 ipv4.method manual \
+ipv4.addresses 192.168.2.100/24 connection.autoconnect yes
+[root@web1 ~]# nmcli connection up eth1
+Web2关闭多余的网卡与VIP，配置本地真实IP地址。
+[root@web2 ~]# ifdown eth0
+[root@web2 ~]# ifdown lo:0
+[root@web2 ~]# nmcli connection modify eth1 ipv4.method manual \
+ipv4.addresses 192.168.2.200/24 connection.autoconnect yes
+[root@web2 ~]# nmcli connection up eth1
+proxy 1 和 2 关闭keepalived服务，清理LVS规则。
+[root@proxy ~]# systemctl stop keepalived
+[root@proxy ~]# systemctl disable keepalived
+[root@proxy ~]# ipvsadm -C
+[root@proxy ~]# nmcli connection modify eth0 ipv4.method manual \
+ipv4.addresses 192.168.4.5/24 connection.autoconnect yes
+[root@proxy ~]# nmcli connection up eth0
+[root@proxy ~]# nmcli connection modify eth1 ipv4.method manual \
+ipv4.addresses 192.168.2.5/24 connection.autoconnect yes
+[root@proxy ~]# nmcli connection up eth1
+
+配置HAProxy负载平衡集群
+环境要求：
+client eth0:192.168.4.10/24
+proxy eth0:192.168.4.5/24
+        eth1:192.168.2.5/24
+web1 eth1:192.168.2.100/24
+web2 eth2:192.168.2.200/24
+
+步骤一：配置后端Web服务器
+设置两台后端Web服务（如果已经配置完成，可用忽略此步骤）
+[root@web1 ~]# yum -y install httpd
+[root@web1 ~]# systemctl start httpd
+[root@web1 ~]# echo "192.168.2.100" > /var/www/html/index.html
+[root@web2 ~]# yum -y install httpd
+[root@web2 ~]# systemctl start httpd
+[root@web2 ~]# echo "192.168.2.200" > /var/www/html/index.html
+
+步骤二：部署HAProxy服务器
+1）配置网络，安装软件
+[root@haproxy ~]# echo 'net.ipv4.ip_forward = 1' >> sysctl.conf  //开启路由转发
+[root@haproxy ~]# sysctl -p     从指定的文件加载系统参数，如不指定即从/etc/sysctl.conf中加载
+[root@haproxy ~]# yum -y install haproxy
+2）修改配置文件 （分三段）
+[root@haproxy ~]# vim /etc/haproxy/haproxy.cfg
+global    //全局设置
+ log 127.0.0.1 local2        //日志放在本机
+ chroot /usr/local/haproxy   //Haproxy自己的工作目录
+ pidfile /var/run/haproxy.pid  //haproxy的pid存放路径，启动服务就有，不启动没有，用来杀进程
+ maxconn 4000     //最大连接数，默认4000并发，整个haproxy软件的并发量，是所有集群结合的并发量
+ user haproxy     //以哪个用户来访问服务
+ group haproxy    //以哪个组来访问服务
+ daemon       //创建1个进程进入deamon模式运行
+defaults      //默认设置，也就是对所有的集群的设置
+ mode http    //默认的模式mode { tcp|http|health }  写tcp就是四层调度，http是7层调度，写health是让haproxy只做健康检查看子服务器是不是好的，不做集群调度器 
+ log  global   //采用全局定义的日志
+ option dontlognull  //不记录健康检查的日志信息，因为haproxy没事要访问子服务器看他们还能不能用，也会产生日志
+ option http-server-close  //每次客户请求完毕后主动关闭http通道
+ option forwardfor   except 127.0.0.0/8   //后端服务器可以从代理服务器中获得客户端ip，但是不包括代理服务器的ip
+ option redispatch     //子服务器挂掉后强制将用户的请求转发到其他健康服务器，不写可是会出现404页面哦
+ timeout http-request  10s  //网站访问超时时间
+ timeout queue   1m      //用户连调度器的超时时间
+ timeout connect 10000 //如果backend没有指定，默认为10s，不写单位是毫秒
+ timeout client 300000 //客户端连接超时
+ timeout server 300000 //服务器连接超时
+ timeout check 10s //健康检查的超时时间
+ maxconn  3000  //最大连接数，作用域不一样，这个是对指定集群说的，每个集群的并最大发量是3000，是不能大于global里定义的最大并发的
+ retries  3   //3次连接失败就认为服务不可用，也可以通过后面设置
+ 然后把#main frontend which.......下面的内容全删除，然后写新的内容（新老版本的问题），新版的更简洁一些，也就是下面的写法
+listen webs ：80    //创建集群，集群名字叫webs，和开启服务的端口
+  balance roundrobin  //调度算法，轮询算法，所有机器都是默认加权的，所以不用单独做加权的
+  server web1 192.168.2.100:80   //加入子服务器,必须起个名字,还可以在最后加权重哦，weight 2 这样
+  server web2 192.168.2.200:80
+
+改完启动服务systemctl start haproxy    systemctl enable haproxy
+
+题外补充：main frontend ....下面写的老版本语法格式 
+frontend 名称 ：端口       frontend 这段代表的是前端
+    use_backend 名称     我要连接哪个后端
+backend 名称   
+  算法
+ server 192.168.2.100
+ server 192.168.2.200     
+
+————————————————————————————————————————————————————————————————————----
+
+接下来研究健康检查功能，还是proxy服务器
+
+vim /etc/haproxy/haproxy.cfg
+.........
+listen webs ：80
+balance roundrobin 其它算法怎么写？leastconn最少连接
+server web1 192.168.2.100:80 check inter 2000 rise 2 fall 5 检查的间隔时间2000毫秒，成功2次才认为你好，失败5次才算子服务器真正坏了
+server web1 192.168.2.200:80 check inter 2000 rise 2 fall 5
+
+haproxy默认就支持查看用户访问量，但是需要配置，配置写在子服务器配置这段下面就可以。
+listen status :1080   //随便起个名字，然后找一个没用的端口，用于监听，等查访问量的时候，就查这个端口。回车bind那样写也一样。
+    stats refresh 30s   #统计页面自动刷新时间，你不动这个页面，它也会自动刷新
+    stats uri /stats    #统计页面url，网站访问 192.168.4.5：1080/stats 找统计用户访问的页面 
+    stats realm Haproxy Manager #统计页面密码框上提示文本，必须这么打
+    stats auth admin:admin  #统计页面用户名和密码设置，冒号前面是用户后面密码
+  #stats hide-version   #隐藏统计页面上HAProxy的版本信息
+
+上面的写完重启服务，然后客户端验证访问 192.168.4.5：1080/stats
+让我们看一下监控页面，结合案例的图片来看，
+Queue队列数据的信息（url当前队列数量，max最大值，limit队列限制数量）；
+Session rate每秒会话率（当前值，最大值，限制数量）是根据会话总量计算出来的，而且默认单位是秒；
+Sessions总会话量（当前值，最大值，总量，Lbtot: total number of times a server was selected选中一台服务器所用的总时间）；
+Bytes（入站、出站流量）；
+Denied（拒绝请求、拒绝回应）；
+Errors（错误请求、错误连接、错误回应）；
+Warnings（重新尝试警告retry、重新连接redispatches）；
+Server(状态、最后检查的时间（多久前执行的最后一次检查）、权重、备份服务器数量、down机服务器数量、down机时长)。
+
+————————————————————————————————————————————————————————————————
+
+keepalived的功能和nginx haproxy lvs结合使用，用它的浮动ip功能，来做调度器的冗余备份，这样调度器坏一台没问题，当然这个架构叫做主备，只有一台调度器坏了，另一台才会工作
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,37 @@
+安全的web服务即https：网页反应速度慢，但是安全性高
+	原理：是利用公私钥对数据加密的方式，来提高安全性。
+	以淘宝为例，当客户访问淘宝网页时，浏览器会自动下载一个公钥软件，客户无感知，这个公钥会把用户的访问请求的相关数据进行加密，只有淘宝公司内部的私钥可以对数据解锁。
+	私钥是存放在淘宝公司内部的，不会在网络上传输，所以黑客即使拦截了数据包，也无法解锁。
+部署安全的web服务（https ：443）：
+	需要三样东西：
+	公钥：用来加密数据（客户端浏览器在访问安全网页时会自动生成的）
+	私钥：用来解密数据   
+	数字证书：证明拥有者的合法性和权威性   #这个一般都是花钱去专门的安全网站买的
+实验：用下载的数字证书、公钥、私钥来部署apache网站
+	1.需要有httpd环境 yum -y install httpd
+	2.部署网站相关证书：
+		1）先进入默认存放证书的系统目录下
+			cd /etc/pki/tls/certs
+			然后下载数字证书（数字证书有俩）
+			下载网站证书：wget 网站证书url
+			下载根证书：wget 根证书url	
+		2）进入默认存放私钥的系统目录下
+			cd /etc/pki/tls/private
+			wget 私钥url
+		3）安装mod_ssl软件模块，apache才能支持安全加密功能：
+			yum -y install mod_ssl
+		4）修改mod_ssl软件的配置文件：
+			vim /etc/httpd/conf.d/ssl.conf
+			末行模式输入set nu，开启行号，找到以下行并修改
+			<VirtualHost _default_:443>
+			59行 DocumentRoot "/var/www/html"                                	//指定安全网页目录
+			60行 ServerName server0.example.com:443                              //指定安全网站的站点和域名
+			.. ..
+			100行 SSLCertificateFile /etc/pki/tls/certs/server0.crt               //指定网站证书
+			.. ..
+			107行 SSLCertificateKeyFile /etc/pki/tls/private/server0.key          //指定网站私钥
+			.. .. 
+			122行 SSLCACertificateFile /etc/pki/tls/certs/example-ca.crt          //指定网站根证书
+	3.重启httpd服务，前提/var/www/html下有网页
+	然后客户访问 server0.example.com:443 就会自动对数据加密，且http：//会变成https://
+ 

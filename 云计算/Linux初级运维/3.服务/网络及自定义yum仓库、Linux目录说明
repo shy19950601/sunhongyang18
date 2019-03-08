@@ -1,0 +1,53 @@
+搭建网络的yum仓库：
+	我们用真机搭建vsftpd服务，来将真机的光盘内容共享，而真机的ftp网址，就是虚拟机的yum源
+	真机部署步骤：
+	1.安装vsftpd软件 yum -y install vsftpd
+	2.利用ftp服务，共享光盘内容，给网络中的机器：
+		先把真机里的光盘挂载：
+		vim /etc/fstab  
+	/var/lib/libvirt/images/iso/rhel-server-7.4-x86_64-dvd.iso /var/ftp/rhel7 iso9660 defaults 0 0
+	#ftp是共享目录rhel目录自己建的，光盘的默认型号是iso9660
+	客户端部署yum仓库：
+	1.vim /etc/yum.repos.d/rhel7.repo
+	[rhel7]
+	name=...
+	baserurl=ftp://真机ip/rhel7
+	enabled=1
+	gpgcheck=0
+自定义yum仓库：将自己下载的软件包整合，作为软件仓库（给虚拟机做自定义yum仓库）
+	下面是真机的操作：
+		这里引入一条网络传输数据的命令，依靠这种方式，可以不需要其它共享协议，即可传输文件
+		scp /root/桌面/tools.tar.gz root@192.168.4.7:/root
+		#将本机的tools.tar.gz压缩包，以对方的root权限传输给对方，：/root 是指定传输到/root目录下，这样传输需要对方root的密码
+	下面是虚拟机的操作：
+	这个传输的压缩包，里面放了很多软件包，我们要将它解压到根下：
+		tar -xf /root/tools.tar.gz -C /
+	现在 / 下有众多的软件包了，我们要将这些软件包整合成软件仓库：
+		createrepo /tools/other #相当于递归自动建了/tools/other，并将软件包放到了other目录里面
+	现在书写yum仓库文件即可：
+		vim /etc/yum.repos.d/rhel7.repo
+		[other]
+		name=...
+		baseurl=file:///tools/other  #file:// 是指定yum源是本地目录 后面写的是yum源路径
+		enabled=1
+		gpgcheck=0
+
+关于Linux的目录描述：
+	可以用 man hier命令查看每一个目录的详细描述
+常用目录：
+	/boot：存放系统引导必须的文件，包括内核，启动配置
+	/bin /sbin：存放各种命令程序
+	/dev：存放硬盘，键盘，鼠标等各种设备的文件
+	/etc：存放Linux系统及各种程序的配置文件
+	/root /home：超级管理员家目录 普通管理员家目录
+	/var：存放日志文件
+	/proc：存放内存中的映射数据，不占用磁盘空间
+	/tmp：存放系统使用过程中的一些临时文件	
+
+
+
+
+
+
+
+

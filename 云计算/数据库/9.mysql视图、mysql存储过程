@@ -1,0 +1,495 @@
+视图和存储过程，都是对表记录做处理的
+所有的实验都在50上做
+用下面操作提供的user表来做视图的相关实验
+先把之前在50上做的多实例停掉：
+		/usr/local/mysql/bin/mysqld_multi --user=root --password=123456 stop 1
+		/usr/local/mysql/bin/mysqld_multi --user=root --password=123456 stop 2
+	然后把50上移走的my.cnf配置文件找回来，之前放/root里了：
+		mv /etc/my.cnf /root/my.cnf2 
+		再mv /root/my.cnf /etc
+		然后systemctl start mysqld
+	然后利用数据导入的方式，把/etc/passwd文件的内容导入到db9库下，再添加一列新的id字段在首列：
+		create database db9;	#建库
+		create table db9.user(	#建表
+			name char(30),
+			password char(1),
+			uid int,
+			gid int,
+			comment char(150),
+			homedir char(150),
+			shell char(50));
+		system cp /etc/passwd /var/lib/mysql-files/
+		load data infile "/var/lib/mysql-files/passwd" into table db9.user fields terminated by ":" lines terminated by "\n"; #导入数据
+		alter table db9.user add id int primary key auto_increment first;  #插字段 
+
+一、mysql视图
+	什么是视图：
+		是虚拟表，内容与真实表相似，有字段有记录，视图并不在数据库中以存储的数据形式存在，
+		记录和字段的数据来自，我们创建视图时查询所引用的基表，并且在具体引用视图时，记录和字段动态生成
+		更新视图的数据，就是更新基表的数据，更新基表的数据，视图的数据也会跟着改变
+	视图的优点：
+		简单：
+			用户不用关心视图中的数据如何查询获得，视图中的数据已经是过滤好的符合条件的结果集
+		安全：
+			用户只能看到视图中的数据,比如我引用基表中的name字段，客户就只能看到这个字段的内容，不能看到基表中的别的数据
+		数据独立：
+			一旦视图结构确定，可以屏蔽表结构对用户的影响，我可以基于一张基表，做不同的视图，不同的用户看到的视图信息就不同！
+	视图的使用限制：
+		不能在视图上创建索引，在视图的sql查询语句中，不能在from语句中使用嵌套查询，
+	以下情况，视图不可以更新：
+		包含以下关键字的sql语句：聚合函数（SUM、MIN、MAX、COUNT等）、distinct、group by、having、union、union all
+		常量视图、.......这些不用刻意记，因为如果你不符合条件，在更改视图数据的时候，系统会直接报错
+	
+	创建视图的语法格式：			
+		create view 视图名称 as SQL查询；
+		create view 视图名称（字段名列表）as SQL查询；
+		#默认是你查的字段是什么名，在视图就叫什么名，你指定了名称，就是将查到的相关字段改名成你指定的名称！但是一定要注意自定义的名称个数一定要和后面查询的个数相同！ 
+		
+		例如：我们create view v1(a,b) as select name,uid from db9.user; 然后我们去show tables，会发现在当前库下多了一个v1表，里面的内容就是name和uid这两列！
+			但是这个v1表只有表结构的frm文件，没有存储记录的ibd文件
+		然后我们就可以利用以上的原理，来做一个只对v1表有权限的用户，这样用户不就只能看这张视图表了吗，但是用户改这个视图表，基表数据也会跟着变化				 	删除视图的命令：
+		drop view 视图表名;
+		#如果你删除的表不是视图表，它会报错的。删除视图表，不会对基表有影响。
+	如何查询视图表对应的基表：
+		命令：
+			show table status; 	#查看当前库下所有表的信息
+			show table status where comment="view"\G;  #这是从当前库下所有表中过滤出基表，有几个视图表就会有几行row，这样不就找出视图表了吗
+			show create view v1\G; 	#然后就可以查看创建视图表的相关信息了
+视图进阶内容：
+	创建视图的完整格式：		
+	create 选项 view 视图名称（字段名列表） as SQL查询 限制条件;
+	其中选项有：
+		or replace #覆盖创建视图，加上这个选项，你就可以用之前存在的基表名称，再创建一张新的视图表，这张新的视图表会覆盖掉原来存在的。
+			例如：create or replace view v1(a,b) as select name,uid from db9.user; 
+		algorithm=undefined或merge或temptable  
+			#算法，undefined是未定义，也就是你没写这个选项，你不定义它就使用merge算法
+			#merge叫替换方式，temptable叫具体化方式
+		#当你创建基表时定义了temptable算法，那么客户在访问v1这张视图表时，系统会先执行一遍你创建基表时的那条sql查询语句，
+		并把其结果放在数据库查询缓存里也就是内存里，然后再去响应客户端查询基表的请求，这就叫具体化方式，而替换方式不会去创建一个临时表，sql查询完直接就把结果写在视图里显示了
+		需要注意的是当你使用的算法是temptable算法时，无法对视图表执行更改表记录操作，因为这个算法会先去执行sql查询语句，从而生成一张临时表，而临时表是不允许修改的 
+			例如：create algorithm=temptable view v1(a,b) as select name,uid from db9.user;  我不写这个选项或者写merge都是merge算法
+
+	用来限制用户能更改视图的表记录范围，local和cascaded这俩关键字决定了范围！
+	其中限制条件的写法是：
+		with cascaded或local check option  #写在sql查询语句后面		
+		local只检查当前视图的限制，就比如你创建视图时，sql的查询语句给了一个范围，那么用户插入的记录也必须在这个范围内！
+		cascaded同时要满足基表（这里的基表是视图）的限制（默认你不写限制条件就是遵循这个规则）
+		例如：
+		create view v1(a,b) as select name,uid from db9.user where uid <= 10 with local check option；
+		#创建视图，它查询基表的范围是uid小于等于10的表记录，那么客户在对视图进行操作时，想要插入uid字段记录的话，也必须在这个范围内，
+		因为基表每次响应客户请求时不管是哪种算法，它都会执行一遍sql查询语句，你的范围超出了这个sql查询语句的范围，它怎么可能会给你显示？！！
+		create view v1(a,b) as select name,uid from db9.v1 where uid <= 20 with cascaded check option；	
+		#这个是v2视图是基于v1视图创建的视图，那么附加选项是cascaded，用户插入表记录时，就要遵循v1表的显示范围，也要遵循v2表的显示范围！
+		此时如果选项是local的话，那么用户插入表记录，就只需要符合自己的显示范围即可,但是如果用户插入的记录，超出了v2基表（视图v1）的范围，即使不会报错，也不会真正插入！
+			综上所述，这个限制条件，根本特么不用写，毛用没有！不写也得遵循两个视图表的范围！
+	
+	设置视图表字段的别名：
+		我们为什么要设置视图别名：
+			我们创建视图时，希望可以将sql查询多表的数据结合起来，制作成视图！需要注意的是，视图中的字段不能重名！
+			视图中的字段名不能重复，所以要定义别名，命令格式如下：
+			这种给视图字段设置别名的方式是在查询语句中起别名，之前那个起别名是在 视图名（起别名）
+				create view 视图名 as select 表别名.源字段名 as 字段别名 from 源表名 表别名 left join 源表名 表别名 on 条件;
+			#这条命令格式用的是左连接查询，命令太长，我们来拆开解释:
+				create view v3 
+				as 
+				select a.uid as auid,b.uid as buid 
+				from 
+				studentinfo as a 
+				left join 
+				teacherinfo as b 
+				on 
+				a.uid=b.uid; 
+			#我们创建v3视图，是通过查询a表的uid和b表的uid创建的，其条件是a的uid字段值等于b的uid字段值，这个on就相当于普通查询中的where，
+			#而我们写的这个a和b其实是studentinfo表和teacherinfo表的别名！这样我们书写这条命令不就贼特么方便了吗？
+			#并且我们也给这俩表的uid字段分别起了别名，叫auid和buid
+			#这个别名可以在这条命令中的任意一个位置起，然后这条命令别的地方就可以引用别名了！
+			#用了左连接再加上on这个条件，就会以左边的表为主显示结果，而不会显示笛卡尔集了，具体的左连接自己看前面的多表查询！
+			
+			我们可以给查询结果起别名，例如：
+				select name,uid+gid as he from user;
+				#这就是将uid+gid这两列的值求和，并给其结果这一列起个别名叫he，其中起别名这个as是可以省略的，这个起别名只是查询那一刻有效，并不会改变表结构
+				select name as user from db1,user;
+				#这就是将查询到的name列起个别名叫user，其中起别名的这个as是可以省略的
+		
+			既然可以查询的时候给字段起别名，那必然也可以查询的时候给表名起别名：
+				select * from user as user1; 
+			#这就是给user表起了个别名叫user1，我们给表起别名的原因是因为源表名太长了，不过这个别名也只是查询那一刻有效。是我们创建视图时，为了书写方便时使用的！
+			
+			那么我们要是查两个表的name字段，这俩表都有一个相同的字段名，可是它们俩的表记录是不一样的:
+				select t5.uid,v1.uid from t5,v1;  #这是查询t5表的uid字段和v1表的uid字段。
+				#这样不加where条件，显示出来的不就是两列uid的笛卡尔集结果吗，不管它的表记录，但是显示出来的是两列uid，而视图的规则不允许你有两列同名字段！
+			所以我们才要给这个表字段设置别名。
+			两种方法：
+				之前create view v1(a,b)这种方法就是将基表中的列名改一下别名：
+				create view(a,b) select t5.uid,v1.uid from t5,v1; 这样就能成功创建视图了
+				另一种方法是在查询语句中起别名：
+				create view v1 as select user.name as a,uesr2.name as b from user,user2 where user.name=user2.name;
+				#这就是创建v1视图，查询的是user表里的name字段值等于user2表里的name字段值，并给这俩字段起了别名叫a和b 							
+二、mysql存储过程
+	存储过程介绍：
+		存储过程，相当于是用mysql命令语句组成的脚本，你可以理解为存储过程就是特么的mysql服务里的shell脚本，指的是数据库中保存的一系列SQL命令的集合！
+		可以在存储过程中使用变量、条件判断、流程控制等。
+		但是和liunx中的shell脚本执行方式不一样，比如我们脚本里的一个cd /opt 命令，系统是解释执行的，是把这串命令翻译成0110这样的二进制数，每次执行都要解释一遍
+		而mysql里的存储过程中写的SQL指令，是需要编译再执行的，且编译完一次，就不需要再编译了，就好比说我们一条select命令，系统会将命令编译成011110这样的二进制数，
+		以后再执行select这条命令时，它不要解释！直接就可以执行了！因为已经编译完计算机能读懂的语言了！所以我们写好的存储过程就叫代码.....
+	使用存储过程的优点：
+		提高性能：因为它是编译执行，而不是每次执行需要解释！
+		可减轻网络负担：也是因为它是编译完的01二进制数，不用每次执行前去解释一遍，所以对网络传输来说，也要快很多！
+		可以防止对表的直接访问：比如我们写好一个存储过程的脚本，它的功能是删除表里的一百条表记录，那么别人要想用这个功能就直接用我们写的这个脚本就可以了，这样不就避免了别人去访问表了吗！
+		避免重复编写SQL操作：这是必然的，我们写脚本不就是为了减少人为操作吗！
+	存储过程的基本使用：
+		
+		1.创建存储过程
+			mysql> delimiter //         		#这句话是定义结束符号，不然你写完一个命令；结尾，系统就会认为你脚本已经写完了！你也可以单独用这条命令来更改sql语句的结束符号！
+			mysql>  create procedure say()     	#say随便写括号一定要有,say是这个脚本的名称
+			    -> begin			
+			    -> select * from user where id<=10;	#这是你要写的脚本,这部分也叫功能体
+			    -> end
+			     -> //   					#脚本写完收工，告诉系统
+			Query OK, 0 rows affected (0.01 sec)
+			mysql> delimiter ;        		#再把命令的结束符号改回来，代表你这个脚本已经写完了，这样你里面写的；结尾的命令才会被执行，分号前有空格
+		2.调用存储过程、执行存储过程：
+			mysql> call say();    			#调用存储过程名,在括号里面不写参数时，可以不加括号，这个say就是你写的那个脚本名称
+		3.删除存储过程：
+			你创建的这个存储过程脚本，它以代码的形式存到数据库里了,你在哪个库里创建的这个脚本，它就存到哪个库里,所以你删除也要指定这个库,就在这个库里，库名就可以省略
+			drop procedure db1.say;
+		4.查看存储过程
+			查看已有的存储过程脚本：
+				show procedure status\G;  #这就是查看当前库下的存储过程脚本详细状态
+				select db,name,type from mysql.proc\G; #可以查看到数据库上所有的存储过程脚本，其中会看到两种类型，有PROCEDURE存储过程和FUNCTION函数！
+			查看存储过程的代码：
+				select db,name,type,body from mysql.proc where name="say"\G;  #就可以查看say脚本的内容了
+
+存储过程进阶：
+1.变量
+	类型：
+	1.1自定义变量：我们可以在命令行中定义变量，定义之后始终有效,放心你退出数据库再进数据库的时候，你在命令行里的自定义变量就会被回收，和Liunx命令行一样！
+		在mysql命令行里输入：
+		set @a="bob" 
+		#这就是定义了一个变量a，并给它赋值为bob,如果要赋的值是数字，就不用加""
+		select @a;
+		#这就是输出变量a的值，如果要定义多个变量或者输出多个变量就用，隔开即可
+		我们也可以把查询结果赋值给变量：
+			select count（name） 
+			into 
+			@b 
+			from db2.user where name="root";
+		#这就是把从db2.user表里查到的name所有的字段值的个数求和之后，赋值给b这个变量！所以我们写存储过程时就可以这么用
+		call @b; 就是引用这个变量b
+	1.2局部变量：
+		定义：只在存储过程脚本的功能体中有效！和Liunx的脚本一个意思！当你执行脚本时，你脚本里的变量会特么在命令行里引用吗！
+		当功能体执行完毕，变量失效，declare专门用来定义局部变量
+			我们可以先测试一下：
+			select db,name,body from mysql.proc where type="procedure" and name="ps_setup_save"\G;		来查看系统的存储过程代码是怎么写的
+			其中有一行DECLARE v_lock_result INT; 		这个就是在脚本里定义了一个v_lock_result局部变量，并设置它成为int类型！
+			而set v_lock_result=10; 				这句话就是给v_lock_result这个局部变量赋值，给局部变量赋值不用加@ 
+			select v_lock_result； 				是输出v_lock_result这个局部变量！
+		调用：
+			call 存储过程名称；		
+	1.3全局变量：生产环境中，全局变量和会话变量这一对儿用的比较少！优化时才会用！
+		定义：随着你服务启动时，因环境而产生的全局变量，是随着服务启动时自己产生的,也可以修改，和会话变量统称系统变量！不管你用哪个终端，哪个服务器，全局变量都是有效的！但是你重连数据库服务时，你设置的全局变量也会变为默认值！
+		如何查看全局变量：
+			show global variables\G;
+			因为全局变量太多，我们可以筛选，比如name version等关键字：
+			show global variables like "%name%";
+			show global variables like "%version%";  可以用于查看这个变量的值
+		如何修改全局变量：
+			set global 变量名=值;
+		如何输出全局变量：
+			select @@hostname;  #这个hostname就是全局变量名，输出全局变量要用俩@@，其实这是为了看主机名称
+			select @@version;   #这个是为了看主机mysql服务的系统版本
+	1.4会话变量：
+		定义：你在linux系统中连接一次数据库，就是一次会话！ 而这个会话变量是只影响你当前终端，你的会话变量里存储的是因mysql服务启动时，受环境影响，所产生的一些信息！和全局变量存储的变量类型是差不多的，也存放量mysql版本、当前主机名、time 等信息！会话变量不像全局变量是不能改的，是可以人为改变它所存储的值的，但是设置只对本次终端有效，再重连mysql时就还原了！
+而且你所更改的只是你自己终端的会话变量！
+		如何查看会话变量：
+			show session variables\G;
+		如何人为设置会话变量：
+			set session sort_buffer_size=40000;
+		只能通过模糊查询来筛选你要的变量，来查看它的值：
+			show session variables like "%query_alloc_block_size%";
+2.存储过程参数类型：
+		create procedure 脚本名称（类型 参数名1 数据类型，类型 参数名2 数据类型）    #这里的数据类型就是字段类型		
+		输入类型：
+			in：输入参数,如果没有给参数定义类型，默认就是输入类型！
+			作用：给存储过程脚本传值，必须在调用存储过程时赋值，在存储过程中该参数的值不允许修改，默认类型是in
+
+			例如：
+			delimiter //
+			create procedure db1.p3(in a char(10))  #这就是说用户输入的值，会赋值给a这个参数！其实a就相当于变量了，但是可以直接引用，不用加@这些乱七八糟的！
+			begin
+			select a;
+			select * from user where name=a; 
+			#这个脚本的意思就是说你去给找user表里name字段中和我这个参数相同的字段值，并显示出来，这个参数是啥，取决于用户输入的是什么！
+			end
+			//
+			delimiter ;
+			然后用户调用这个脚本的时候，就要写参数了：call db1.p3("bob"); 用户写的这个bob就是本次执行脚本的参数了！
+
+		输出类型：
+			out：输出参数
+			作用：该值可在存储过程内部被改变，并可返回。
+			例如：
+			delimiter //
+			create procedure db1.p4(out b int)  #这就是说用户输入的值，会赋值给a这个参数！其实a就相当于变量了，但是可以直接引用，不用加@这些乱七八糟的！
+			begin
+			select count(name) into b from db1.user where shell=/bin/bash; 
+			#这个脚本的意思就是，你去给我统计user表里有多少个用户的shell是/bin/bash的，并把统计结果传给b这个参数！
+			select b;  #再把这个参数输出一下
+			end
+			//
+			delimiter ;
+			然后用户调用这个脚本的时候：call db1.p4(@x); 用户用x这个空变量，来接收脚本里所查出来的值，因为用户也不知道你参数是什么啊，所以要用变量来接收传出来的值！
+			这个时候，你再select @x; 就能清楚的明白，是p4这个脚本，将参数的值赋值给了x这个变量！！！
+			当然你要是想直接要查询结果，不想再select一遍，那就用局部变量写脚本啊！
+
+		输入输出类型：
+			inout：输入/输出参数
+			例子：
+			delimiter //
+			create procedure db1.p4(inout c int) 
+			begin
+			select * from db1.t5 where uid <= c; 
+			#这句话，是你客户输入一个值，为这个参数赋值，然后，这个sql查询根据你赋值的参数来显示结果！
+			#和下面那句话的顺序一定不能颠倒，不然就会先给用户输入的变量传值，而不是先用客户变量里的值来查询其想要的结果了！那这个脚本就没有意义了！
+			select count(uid) into c from db1.t5;  
+			#这句话是用c这个参数来接收sql查询结果，然后你客户端要用一个变量来接收这个参数的值，你这个变量是不是空变量都无所谓
+			#命令都是一条条执行的，变量的值是可以覆盖的！所以你这两行完全不冲突，完美的把输入输出利用上了！
+			select c; 
+			end
+			//
+			delimiter ;
+			
+			然后你客户端要给一个变量赋值，比如你想查uid小于3的用户，就给变量赋值为3，然后调用脚本时，会先给你显示uid小于3的用户，再重新把参数的统计结果值传给变量，重新赋值变量！并把这个参数的统计结果输出！
+			set @a=3;   你也可以不给变量赋值，那就是第一句话中参数没有值可以执行，那第一句命令就跳过了！
+			call db1.p4(@a);  注意你调用这个脚本时，不能直接用数字，因为你数字特么怎么接收第二句命令里，参数传出来的值？！
+			select @a;  这个时候a就变成11了，是第二行命令里的参数传出来的值！
+3.算术运算：
+		+ 	- 	* 	/ 	%
+		例：
+		set @a=1+1; 	#那么变量a就是2
+		set @a=2; set @b=3; set @c=@a+@b; 	#那么自定义变量c就等于5，也可以一部分用变量，一部分用常量计算。
+	其中除法运算有点牛比，正常用/来做除法运算，如果没有除尽，它会显示小数！如果想做除法运算不想让结果显示小数，就可以用div！
+		set @a=10 div 3;
+		select @a; #我们就会看到整数3了
+	我们用算法写一个脚本：注意一定要指定库名，或在一个库里面
+		mysql> delimiter  //
+		mysql> create procedure  db9.p4()
+		-> begin
+		-> declare x int;
+		-> declare y int;
+		-> declare z int;
+		-> select count(name) into x from  db9.user where shell="/bin/bash";
+		-> select count(name) into y from  db9.user where shell="/sbin/nologin";
+		-> set z = x + y;
+		-> select x, y , z;
+		-> end
+		-> //
+		mysql> delimiter ;
+		mysql> call db9.p4;
+		#有了这个脚本，我们就不用一遍遍去查变化了，每次用户对表记录做了更改，我们去执行一遍这个脚本，就可以知道发生了什么变化		
+
+4.流程控制：
+	你没有流程控制，你的存储过程脚本，命令就是逐行执行，弱爆了
+	4.1条件判断：
+其中条件测试包括：
+	数值的比较：
+		=
+		<
+		> 
+		>=
+		<=
+		!= 
+		between 数字 and 数字
+	逻辑比较：
+		or：两个条件满足其一，也叫逻辑或
+		and：两个条件全满足，也叫逻辑与
+		!：不是...，也叫逻辑非
+		in ...：在...范围内
+		not in ...：不在...范围内
+		is null：字段的值为空
+		is not null：字段的值不为空
+		like：模糊匹配
+		regexp：正则匹配			
+		1）单分支选择结构if：条件成立时，执行命令序列
+			if 条件测试 then
+				功能体
+			end if;
+		例子：	mysql> delimiter  //
+			mysql> create procedure say2(in a int)
+			-> begin
+			-> if a=1 then
+			-> select * from db1.t5 where uid=5;
+			-> end if;
+			-> end		
+			-> //
+			mysql> delimiter ;
+			然后你调用的时候	call db1.say2(2); 	测试
+
+		2）双分支选择结构：当条件成立时，执行代码1；否则执行代码2
+			if 条件测试 then
+				功能体1
+			else 
+				功能体2
+			end if;
+		例子：mysql> delimiter  //
+		     mysql> create procedure say2(in a int)
+			-> begin
+			-> if a!=1 then
+			-> select * from db1.t5 where uid<=5;
+			-> else
+			-> select * from db1.t5 where uid>3;
+			-> end if;
+			-> end		
+			-> //
+			mysql> delimiter ;
+			然后你调用的时候	call db1.say2(2); 	测试
+		
+		while条件式循环：反复测试条件，只要成立就执行命令序列
+			while 条件判断 do 
+				功能体
+			end while;
+		例子1：我想调用存储过程时，让它给我输出1到10这些数字。
+			mysql> delimiter  //	
+			mysql> create procedure say3
+			-> begin
+			-> declare x int;
+			-> set x=1;
+			-> while x<=10 do
+			-> select x;
+			-> set x=x+1;
+			-> end while;
+			-> end		
+			-> //
+			mysql> delimiter ;
+		然后你调用脚本 call db1.say3； 即可
+		例子2：我想调用的时候，指定范围，比如我输入3，它就给我显示1到3。
+			mysql> delimiter  //
+		 	mysql> create procedure say4(in a int)  定义一个参数，并让它接收用户的值，让它是数值类型！
+			-> begin
+			-> declare x int;   #定义一个局部变量，并让它是int类型
+			-> set x=1;
+			-> while x<=a do
+			-> select x;
+			-> set x=x+1;
+			-> end while;
+			-> end		
+			-> //
+			mysql> delimiter ;
+		然后你调用脚本的时候，给a这个参数赋值即可看出来效果，call say4(4);		
+		
+		loop死循环：无条件的反复执行某一端代码
+			loop
+				功能体
+			end loop;
+		例子：没啥意义单纯看效果！
+			mysql> delimiter  //
+		 	mysql> create procedure say4
+			-> loop
+			-> select * from db1.t5;
+			-> end loop;
+			-> end		
+			-> //
+			mysql> delimiter ;
+
+		repeat条件式循环：当条件成立时，结束循环
+			repeat
+				功能体
+				until 条件判断
+			end repeat;
+		例子：还是让脚本输出1到10这些数字
+			mysql> delimiter //
+			mysql> create procedure say5()
+			-> begin
+			-> declare x int;
+			-> set x=1;
+			-> repeat
+			-> select x;
+			-> set x=x+1;
+			-> until x<=10;
+			-> end repeat;
+			-> end		
+			-> //
+			mysql> delimiter ;
+		例子2：你想让脚本从数字1循环输出到几，再停止
+			mysql> delimiter //
+			mysql> create procedure say5(in a int)
+			-> begin
+			-> declare x int;
+			-> set x=1;
+			-> select x;
+			-> repeat
+			-> select x;
+			-> set x=x+1;
+			-> until x<a;  #当条件不满足时停止循环，但是会至少执行一次循环里的sql语句
+			-> end		
+			-> //
+			mysql> delimiter ;
+			然后你再调用这个脚本call say5(8);
+5.流程控制语句，控制循环结构的执行：
+以上三种循环，我想让它们即使条件测试通过，也停止循环，就需要这种方式来控制
+	leave结束循环 这个就相当于shell里的break
+	iterate结束当前循环 并开始下一次循环 相当于shell里的continue
+
+	leave的例子：
+		mysql> delimiter  //	
+		mysql> create procedure say3
+		-> begin
+		-> declare x int;
+		-> set x=1;
+		-> aaaa:while x<=10 do    #这是给这整个while循环起了个名字！
+			-> if x=5 then	#这就是说如果这个脚本中的x变量等于5时，执行下面的功能体！
+			-> leave aaaa;	#这就是直接结束aaaa这个循环！！！
+			-> end if;
+		-> select x;
+		-> set x=x+1;
+		-> end while;
+		-> end		
+		-> //
+		mysql> delimiter ;
+
+	iterate的例子：
+		mysql> delimiter  //	
+			mysql> create procedure say3
+			-> begin
+			-> declare x int;
+			-> set x=1;
+			-> aaa:while x<=10 do
+				-> if x=5 then	#也就是说先给这个循环起个名叫aaa，等x等5的时候，停止本次循环里的sql语句，去执行下一个循环！
+				-> set x=x+1; 	#所以为了避免造成卡住的结果，就在if里面写一个x+1，这样就越过5了
+				-> iterate aaa;	#但是这里需要注意一下，因为你在x等5的时候，退出循环了，那它就没有办法做+1操作了，那x的值就会一直是5！
+				-> end if;
+			-> select x;
+			-> set x=x+1;
+			-> end while;
+			-> end		
+			-> //
+			mysql> delimiter ;
+	案例：
+	定义名称为p3的存储过程，用户可以自定义显示user表记录的行数，若调用时，用户没有输入行数，默认显示第1条记录
+		delimiter //
+		create procedure p3(in x int)
+		begin
+			if x is null then
+				select * from user where id=1;
+			else 
+				select * from user where id<=x;
+			end if;
+		end
+		//
+		delimiter ;
+	然后你调用的时候就可以call p3(10);  	()里面可以写数字，也可以写变量，变量的值可以为空，但是一定不能什么都不写！不写就报错！
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

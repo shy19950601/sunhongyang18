@@ -1,0 +1,17 @@
+NTP时间同步：因为集群服务器时间必须一致，该服务用于解决该问题
+	NTP服务器为客户机提供标准时间,客户端与NTP服务器保持沟通
+客户端服务部署：
+	1.客户服务器安装chrony软件
+		wget chrony的url（如果yum仓库有该软件包，这步省略）
+		yum -y install chrony
+	2.客户服务器修改配置文件，指定从哪里获取时间vim /etc/chrony.conf
+		server classroom.example.com iburst #是指从classroom机获取时间并与其同步
+		并注释其它行，让其它行无效
+	3.重启程序，并设置开机自启动
+		systemctl restar chronyd
+		systemctl enable chronyd
+	4.验证时间同步
+		修改本机时间date -s '时间'
+		5分钟后，再查看，会发现时间自动变正确了
+
+
