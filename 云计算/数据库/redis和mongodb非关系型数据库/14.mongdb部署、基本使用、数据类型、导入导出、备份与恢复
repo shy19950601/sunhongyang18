@@ -1,0 +1,246 @@
+一、部署mongodb服务
+	默认端口号27017 	
+	1.mongodb介绍：
+		介于关系型数据库，和非关系型数据库之间的产品(数据存硬盘，但是存数据时不用先有表结构)
+		一款基于分布式文件存储的数据库，也就是说它存数据是以文件的形式存的！
+		是为了给WEB应用提供可扩展的高性能数据存储解决方案
+		将数据存储为一个文档，数据结构由键值（key => value）对组成
+		支持丰富的查询表达，可以设置任何属性的索引
+		支持副本集（高可用、主从同步），数据分片
+
+		在mongodb中一些名词的叫法：
+			mysql中：			mogodb：
+			database 数据库	=>	DB 库
+			table 表		=>	collection 集合
+			row 表记录		=>	document 文档
+			field 字段		=>	col 列
+	2.部署mogodb服务器
+		mongodb-linux-x86_64-rhel70-3.6.3.tgz 软件的压缩包由教学环境提供
+		解压之后会在当前目录生成mongodb-linux-x86_64-rhel70-3.6.3目录
+		该目录就是mongodb软件的所有内容，因为这个包是编译压缩的，所以你解压之后，这个包就相当于安装成功了
+			cd /root/mongodb-linux-x86_64-rhel70-3.6.3
+
+		具体部署步骤如下：
+			1）我们把这个存放管理命令的目录放到/usr/local/下方便以后使用：
+				cp -r ./mongodb-linux-x86_64-rhel70-3.6.3/bin /usr/local/mongodb
+			2）创建存放 配置文件 日志 数据 的目录：
+			mkdir /usr/local/mongodb/etc
+			mkdir /usr/local/mongodb/log
+			mkdir -p /usr/local/mongodb/data/db	#这个存放数据的目录必须要这么创建
+			3）手动创建主配置文件：
+			vim /usr/local/mongodb/etc/mongodb.conf
+				dbpath=/usr/local/mongodb/data/db/     		//指定数据库目录
+				logpath=/usr/local/mongodb/log/mongodb.log    	//指定日志文件
+				logappend=true      					//记录日志的方式，是以追加的方式记录日志信息
+				fork=true       						//服务以守护进程的方式运行，服务器动就开启线程等候客户端连接
+				保存退出即可
+			4）启动服务，指定我们手写的配置文件来启动服务：
+				启动服务命令是mongod -f，但是我们要输入绝对路径
+				/usr/local/mongodb/bin/mongod -f /usr/local/mongodb/etc/mongodb.conf
+			5）停止服务的命令：
+				/usr/local/mongodb/bin/mongod -f /usr/local/mongodb/etc/mongodb.conf --shutdown
+					嫌弃命令长就设置别名
+			6）修改服务使用的IP，和端口号：
+			vim /usr/local/mongodb/etc/mongodb.conf
+				添加两行
+				bind_ip=192.168.4.51    	//指定服务使用的ip
+				port=27017            	//指定服务端口号，默认不指定就是27017
+				改完保存退出重启服务
+			
+			连接mongodb数据库：
+				/usr/local/mongodb/bin/mongo
+				#这是没有密码的连接
+			如果其他主机的客户端想连接mongodb的话，就要命令加选项了：（前提我们服务端配置了端口和ip）
+				/usr/local/mongodb/bin/mongo --host 本机网卡的ip --port 27017	
+			退出连接：
+				exit
+
+***********************************************************************************************************************************************************************
+
+二、mongodb的基本使用（它的命令严格区分大小写！）
+	常用管理命令
+		1）库管理命令
+			show dbs 					//查看已有的库
+			db 						//显示当前所在的库,默认在test库里
+			use 						//库名 切换库，若库不存在则创建库并进入该库，不过会有延时,你db查看时，不会立刻就显示
+			show collections 或 show tables 	//查看库下已有集合
+			db.dropDatabase() 			//删除当前所在的库
+		2）集合管理命令
+			也就是表，表里的每一行表记录，字段个数可以不同，每一行记录的字段类型也可以不同！并且连表都不用事先创建
+
+			创建表，及其记录：
+				db.t1.save({name:"bob",age:19})
+					#这就是直接创建t1表
+					#并且创建建两个字段，name和age字段，"bob"和19是这两字段的值
+					#如果要赋值字符要加上"",字段到底是什么类型，取决于你赋的值
+					#这就是在t1表里创建的第一行表记录
+				db.t1.save({name:"tom",age:20},id:19950601)
+					#这就是在t1表里创建第二行
+			查看当前库里的表：
+				show tables
+			查看表里的值：
+				db.t1.findOne() 	#查看第一行的内容
+				db.t1.find()	#它会自己创建一列id字段，并自己赋值，虽然它是查看表里所有值的命令，但是一次最多只会显示20行，想再看20行需要输入"it"
+			查看、创建、删除collection 集合（表）：
+				show collections 或 show tables 	//查看库下已有集合
+				db.集合名.drop() 				//删除集合
+				db.集合名.save({'',''}) 			//创建集合
+			集合（表）的命名规范：
+				不能是空字符串
+				不能含有"\0"字符（这个 \0 字符表示集合的结尾）
+				不能以"system."开头，这是为系统集合保留的前缀
+				用户创建的集合名字不能含有保留字符			
+				
+		3）文档管理命令：集合（表）里的行叫做文档（表记录）
+			命令格式：
+				db.集合名.find()	#查看表里所有的内容
+				db.集合名.count()	#统计这个表里有几行
+				db.集合名.insert({“name”:”jim”})	#这个也是往表里写入数据的，但是和save有区别
+				db.集合名.find({name:"bob"})	#只显示名字是bob的行
+				db.集合名.findOne() 		#返回查询一条文档
+				db.集合名.remove({}) 		#删除所有文档
+				db.集合名.remove({条件}) 		#删除与条件匹配的所有文档
+
+***********************************************************************************************************************************************************************
+
+三、基本数据类型：
+	你字段的类型，不是事先创建的，而是你建表时，给字段赋什么类型的值，它字段就是什么类型的
+	1.字符串型string：
+		db.t1.save({school:"tarena",班级:"云计算"})	#注意所有的符号必须是英文
+	2.布尔型bool：
+		它的值只有两种，真true和假false
+		db.t1.save({marry:true}) 	#这个字段类型就是布尔类型，你结婚与否，不用加引号
+	3.空null：
+		就是字段没值的意思
+		db.t1.save({child:null})		#就是写了一行表记录，并这行的child字段没值
+	4.数值型：
+		如果你赋值时只写数字，那它默认最大能存储的数据就是64位（bit）浮点型数值，（能存255的8次方字节，255的8次方*8个数值）
+		这个字段即可以写整数也可以写小数
+		如下：
+		db.t1.save({age:18})
+		如果你想定义指定其它存储大小的数值类型：
+			NumberInt 4字节大小的整数型
+				例如：
+				db.t1.save({age:NumberInt(18)}) #如果你输入了小数，它不会存小数位，但是也不会报错
+			NumberLong 8字节大小的整数型
+				db.t1.save({age:NumberLong(18)}) #如果你输入了小数，它会报错
+	5.数组型array:
+		可以让一个字段存多个值
+		赋值方法：
+		db.t1.save({age:["a","b",10]})		#这就是创建age字段，并赋多个值，可以数字和字符一起赋！
+	6.代码类型：
+		我可以给字段用代码赋值
+		格式：
+		db.t1.save({php:function(){/*你要存的代码*/}})
+	7.日期类型：
+		它会按系统当前时间去赋值
+		格式：	
+		db.t1.save({time:new Date()})	#年月日是当前时间，不过具体的时间 是从新纪元开始到现在经过的毫秒数
+	8.对象类型：
+		我们在创建新的记录时，系统会自动写一个_id字段并每次增加记录时，做自增长赋值 
+		"_id" : ObjectId("5c8336de822450e370aa9272") 这个_id字段的类型就是对象类型！
+		如果你想创建一个这样的对象字段，格式如下：
+			db.t1.save({x:ObjectId()})		
+			#不过没什么意义，系统还是会自动生成_id字段来标识每一条记录
+	9.内嵌类型：
+		文档（表记录）可以嵌套其他文档（表记录）作为值来处理
+		例如：
+		db.t1.save({baidu:{address:"beijing",phone:"666888"}})
+	10.正则表达式类型：	
+		例如：
+		db.t1.save({zhengze:/正则表达式/})	#这就是把正则表达式作为值赋给字段
+
+***********************************************************************************************************************************************************************
+	
+四、数据导入导出：涉及到两种文件类型，可以看效果，两种类型有区别
+	导出：
+	把集合里的文档保存到系统文件里
+			语法格式1：
+	/usr/local/mongodb/bin/mongoexport --host  ip --port 端口号  -d 要导出的库名 -c 要导出的表名 -f 字段名1，字段名2 --type=csv > 目录名/文件名.csv
+				#导出指定表里的指定字段值，如果表是csv格式的话，就一定要 -f指定字段列表！
+			例如：
+	/usr/local/mongodb/bin/mongoexport --host 192.168.4.51 --port 27077 -d ddsdb -c t1 -f name --type=csv > /root/lig1.csv
+		#这就是导出t1表中name这列的所有值，导入到/root/lig1.csv目录下，要求文件名后缀必须是.csv
+
+			语法格式2：
+	/usr/local/mongodb/bin/mongoexport --host ip --port 端口号 -要导出的库名 -c 要导出的表名 -q '{指定条件}' -f 字段名1,字段名2 --type=csv > 目录名/文件名
+				#如果不加条件，就时把表里的指定字段值全都导出
+			例如：
+	/usr/local/mongodb/bin/mongoexport --host 192.168.4.51 --port 27077 -d ddsdb -c t1 -q '{name:"bob"}' -f name,age --type=csv > /root/lig2.csv
+		#这是导出name,age这俩字段的值，要求name是bob的行,如果表是csv格式的话，就一定要 -f指定字段列表！
+
+			语法格式3：
+	/usr/local/mongodb/bin/mongoexport --host ip -d 要导出的库名 -c 要导出的表名  -q '{指定条件}' -f 字段名1,字段名2 --type=json > 目录名/文件名.json
+		#是json类型的文件，可以把 -q 和 -f 都省略，也可以不省略，要求文件后缀必须是.json，如果不省略 -q -f这种格式就是把整个表都导出了！
+			例如：
+	/usr/local/mongodb/bin/mongoexport --host 192.168.4.51 --port 27077 -d ddsdb -c t1 --type=json > /root/lig2.json
+		#这就是把t1表完整的导出到/root/lig2.json文件里
+
+	导入：
+	把系统文件的内容存储到集合里，即使你库或者表不存在，它也会自动创建库和表
+			语法格式1：
+	/usr/local/mongodb/bin/mongoimport --host  ip --port 端口号  -d 要导入进去的库名 -c 指定表名 --type=json /root/lig2.json
+		#将json文件里的内容导入到指定表里，没有表，自己创建表
+			例如：
+	/usr/local/mongodb/bin/mongoimport --host 192.168.4.51 --port 27077 -d ddsdb -c t1 --type=json /root/lig2.json
+		#这就是把/root/lig2.json文件里的内容导入到t1表里，或者是没有t1，它自己创建t1	
+		
+			语法格式2：
+	/usr/local/mongodb/bin/mongoimport --host  ip --port 端口号  -d 要导入进去的库名 -c 指定表名 --headerline --drop --type=csv /root/lig2.csv
+		#如果你要把csv文件作为表导入到库里，必须要指定字段名！如果不想指定字段名，要加上--headerline（意思我要拿文件中的第一行做为表的列名），
+		#这样就能把所有内容都导入了,它会把文件里的首行作为列名，如果哪一行的表记录没有这么多列，它就会赋一个""给这一行表记录
+		#--drop是说，如果你这张表是存在的，它会自动删除t1表，再重新创建表写入，如果你不加--drop，它就会追加写入表记录了
+			例如：
+	/usr/local/mongodb/bin/mongoimport --host 192.168.4.51  --port 27077  -d ddsdb -c t1 --headerline --type=csv /root/lig2.csv	
+
+		假如我们想把/etc/passwd文件数据导入到mongodb表里怎么做：
+			1.先把文件转换成csv格式或者json格式
+			怎么转换csv格式：
+			所谓的格式转换，就是将文件内容的记录格式，改成csv对应的格式，然后你做导入操作时，它就会自己识别了
+			csv格式好转换，你看csv文件和json文件内容就可以看出来
+			不管你文件是json还是csv，最后mongodb的表的样子是一样的
+				csv格式的文件，每一个内容都是以 , 间隔的，而/etc/passwd文件是以：间隔的，所以我们要把所有的：替换成 ，
+					cp /etc/passwd /opt/
+					sed -i 's/:/,/g' /opt/passwd
+				现在这个文件还没有字段名，我们还要输入一行字段名，以首行作为表的字段名
+					sed -i '1iname,password,uid,gid,comment,homedir,shell' /opt/passwd	#1i是在首行插入的意思
+				然后导入userdb库user表即可
+				/usr/local/mongodb/bin/mongoimport --host 192.168.4.51  --port 27077  -d userdb -c user --headerline --type=csv /opt/passwd	
+
+***********************************************************************************************************************************************************************
+
+五、数据备份与恢复
+	准备一台新的服务器51，并在51上部署mongodb服务
+	数据备份：
+		在50上操作，将50上的数据备份
+		备份命令：/usr/local/mongodb/bin/mongodump --host ip地址 --port 端口号	
+			#这就是把自己mogodb数据库里的所有库（除了3个系统库）备份到当前目录下，并自动在当前目录下创建一个dump目录，存到里面
+			#也可以加上 -d 数据库名，就是备份指定库的数据，-c 表名，就是备份指定表，-o 系统目录名，就是将备份数据存放到指定目录里，而不用它自己建的dump目录
+		命令：/usr/local/mongodb/bin/bsondump 指定文件名 
+			#这个命令可以查看dump目录里的.bson文件，也就是备份文件的内容。
+	数据恢复：	
+		将50上的的备份文件，用与51恢复，先从50上把备份文件（dump）scp给51
+		恢复命令：/usr/local/mongodb/bin/mongorestore --host ip --port -d 库 -c 表 --drop 所要用的备份文件名
+			#这是数据恢复命令，写51自己mongodb服务使用的ip和端口，如果要恢复到指定库，指定表就写 -d -c，否则不用，--drop是如果表里有内容，把表里内容清空，再恢复数据
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
