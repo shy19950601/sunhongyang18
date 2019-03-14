@@ -1,0 +1,55 @@
+lnmp+mongodb集群：
+	在50服务器上部署：
+	先要有nignx、php、mongodb环境
+	然后要给php下载支持连接mongodb的模块叫做 mongo
+
+可以用命令php -m查看一下目前php加载的模块
+程序员应该在/usr/local/nignx/html目录下写一个连接mongodb数据库的脚本
+	这个脚本内容：
+	vim mongodb.php
+	<?php
+	$m = new Mongo("mongodb://192.168.4.50:27050");	#这是连接数据库，写接数据库使用的ip和端口号，如果想连别的数据库，就要写的数据库的ip和端口
+	$db = $m->db1;						#这是选择db1库，没有就创建并进入
+	$c = $db->t1;						#这是选择t1表，没有就创建进入
+	$data=array("name"=>"bob","age"=>19);		#这是定义一个数据
+	$c->insert($data);					#这是把定义的数据插入进去
+	echo "data ok";						#这是输出指定信息
+	?>
+所以当用户访问这个网站的这个脚本http://192.168.4.50/mongodb.php，就会执行脚本里的php代码，往库里存数据了，这就是一个简单的测试，看能否连接数据库，并做操作的
+
+现在就为php安装这个mongo模块，并让php加载这个模块，使其让它可以连接mongodb数据库，但是前提需要先有相关的配置文件：
+	所有的相关模块的软件包是教学环境提供的，在mongodb文件夹里叫mongo-1.6.16.tgz
+	解压之后，生成mongo-1.6.16目录,进入到这个目录里
+	输入命令phpize 这个命令是检查php的配置环境，并生成configure配置命令
+	现在我们需要通过configure配置命令来告诉php-config模块在哪，这个模块是用于生成mongo.so模块的，也就是连接mongodb的模块
+	我们不知道这个php-config在哪，可以通过find / -name "php-config" 来找一下它在哪
+		./configure --with-php-config=/usr/bin/php-config		#我们要安装php-config这个，默认php没有配置文件，并指定其位置在哪	
+		make									#编译
+		make install							#安装
+	用于连接mongodb数据库的模块完整名称是mongo.so,这个模块在/usr/lib64/php/modules/mongo.so 这里
+	现在我们要让php加载mongo.so模块，需要修改php主配置文件：
+	vim /etc/php.ini	
+		在731行写入一行：extension = "mongo.so"
+	然后重启php-fpm
+	现在50这台服务器的php就可以连接mongodb数据库了，可以把写好的脚本放在网页目录下，让其它客户端测试了，要求其它客户端也要有mongodb服务
+	然后50再去mongodb里看，是否生成了对应的数据
+
+	如果想要访问集群，那就改50上的mongodb.php网页的代码
+	<?php
+	$m = new MongoClient("mongodb://192.168.4.53:27050，192.168.4.52:27050，192.168.4.51:27050");	
+		#MongoClient命令就是连副本集的命令，哪个是主库，先写哪个，写接数据库使用的ip和端口号
+	$db = $m->db1;						#这是选择db1库，没有就创建并进入
+	$c = $db->t1;						#这是选择t1表，没有就创建进入
+	$data=array("name"=>"bob","age"=>19);		#这是定义一个数据
+	$c->insert($data);					#这是把定义的数据插入进去
+	echo "data ok";						#这是输出指定信息
+	?>
+
+不过脚本是程序员写的，我们只需要提供副本集的成员ip和端口号即可，但是环境的部署，我们是需要操作的！
+
+
+
+
+
+
+
