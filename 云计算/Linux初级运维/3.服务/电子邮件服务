@@ -5,21 +5,68 @@
 	3.处理用户收到的邮件（将其投放到给本服务器里注册的用户）
 	SMTP：发用户邮件协议 端口号25
 	POP3：收用户邮件协议 端口号110
-工作原理：从A网站注册邮箱，发给B网站用户，中间还要经过一个DNS服务器，每个网站是不同的服务器提供服务的
-	搭建邮件服务器：
+
+工作原理：
+	从A网站注册邮箱，发给B网站用户，中间还要经过一个DNS服务器，每个网站是不同的服务器提供服务的
+	这个实验是在一台服务器上的两个用户收发邮件
+搭建邮件服务器：
+	收邮件服务 端口110
+		1.安装软件包dovecot
+		2.systemctl start dovecot		
+	发邮件服务 端口25
 		1.安装软件包postfix
 		2.修改主配置文件vim /etc/postfix/main.cf
 			在末行模式输入set nu开启行号，找到指定行并修改
-			99行 myorign = server0.example.com #本机用户自动补全该域名
-			116行 inet_interfaces = all #本机所有网络接口用于提供邮箱服务
-			164行 mydestination = server0.example.com #判断用户的域名后缀是否是这个，不是就是外域，是就是本域
+			99行 myorign = server0.example.com 		#本机用户自动补全该域名
+			116行 inet_interfaces = all 			#本机所有网络接口用于提供邮箱服务
+			164行 mydestination = server0.example.com 	#判断用户的域名后缀是否是这个，不是就是外域，是就是本域		
 		3.重启postfix服务
-		systemctl restart postfix
-		systemctl enable postfix
-在服务器本机上，给用户lisi发一封测试邮件
- 	echo  '1111'  |  mail  -s  'mail1'  lisi   #非交互的发送邮件 -s '邮件标题' 
-由管理员收取指定用户lisi的邮件
-	mail  -u  lisi
+			systemctl restart postfix
+			systemctl enable postfix
+
+
+		在本机添加邮箱账户：
+			useradd jim	
+			echo 123456 | passwd --stdin jim
+				因为配置文件可以自动补全域名，所以我们用服务器里的用户收发邮件时，系统会自动给我们补全域名
+				也就是说邮箱账户是jim@server0.example.com	邮箱密码就是用户密码123456
+		设置邮箱目录：
+			我们应该把收邮件的目录，和发邮件的目录，设置成同一个目录
+			配置发邮件服务的配置文件/etc/postfix/main.cf
+				vim /etc/postfix/master.cf	
+				419 #home_mailbox = Maildir/		#把注释去掉，指定把邮件发送到哪个位置，意思是发送到用户家目录下的/Maidir目录下
+				然后重启一下postfix服务
+			配置收邮件服务的配置文件/etc/dovecot/conf.d	不过它不是把所有配置放在一个配置文件里，而是方在这个目录底下的多个文件里
+				vim /etc/dovecot/conf.d/10-auth.conf	#修改一下认证方式的配置文件	
+					#disable_plaintext_auth = yes	#这一行是允许用户输入明文密码，把它注释去掉，改成no，就是允许了
+				vim /etc/dovecot/conf.d/10-mail.conf	#这是改收邮件的目录
+					#   mail_location = maildir:~/Maildir	#把这一行的注释去掉，也就是去家目录下的Maildir这个目录下去收邮件
+				然后重启一下dovecot服务
+
+如何收邮件：
+	收发邮件需要telnet服务的支持，所需软件包是telnet
+	利用telnet登陆dovecot查看本机上的用户是否收到过邮件：
+		telnet localhost 110	#检测本机110端口是不是有邮件
+		再输入user jim		#就是登陆jim这个用户
+		再输入pass 对应的密码	#登陆进这个用户,如果你发现登陆不了，就把这个用户删除掉userdel -r连家目录一起删除掉，再重新建一个！
+		再输入list			#列出这个用户收到的邮件
+		再输入retr 1			#就是查看编号是1的邮件
+		在输入quit			#就是退出
+如何发邮件：
+	利用telnet登陆postfix发邮件：
+		telnet localhost 25
+		mysql50	#我们需要先定义这封邮件的标题
+		mail from:root@localhost		#这个是定义发件人地址
+		rcpt to:jim@localhost		#这个是指定收件人的地址
+		输入data然后敲回车，开始写邮件内容
+		输入.	是发送邮件
+		然后输入quit退出即可
+
+其它方法收发邮件：		
+	在服务器本机上，给用户lisi发一封测试邮件
+	 	echo  '1111'  |  mail  -s  'mail1'  lisi   #非交互的发送邮件 -s '邮件标题' 
+	由管理员收取指定用户lisi的邮件
+		mail  -u  lisi
 	
 
 

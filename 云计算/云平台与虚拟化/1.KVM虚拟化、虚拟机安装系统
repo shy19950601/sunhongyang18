@@ -1,0 +1,340 @@
+linux里两大内核内置解释器，一个shell的解释器，一个python解释器，yum就是用python写的
+IT三大方向：AI人工智能 DB大数据 Cloud云计算   python语言做AI、爬虫比较好
+阿里云是闭源的		华为云是开源的
+相关资料的下载的地址：
+	git clone git://124.207.192.18/nsd1811.git：下载git文件 异地下载
+	git clone git://172.40.53.65/nsd1811.git	本地下载
+	git pull：同步更新
+
+************************************************************************************************************************************************************************
+
+虚拟化的概念：
+	网络传输速率远远低于物理设备（硬盘、内存、cpu）
+	虚拟化是把一台机器虚拟成多台机器
+	而集群是把多台机器虚拟成一台机器
+	虚拟化分成完全虚拟化和部分硬件辅助虚拟化：
+		完全虚拟化是全部硬件都用软件虚拟化出来
+		部分虚拟化是部分硬件设备用真机的硬件
+		CPU来决定是否支持部分虚拟化
+相关的虚拟化产品：
+	vmvare是闭源的，是装在windows上的,它有个管理端叫vcenter
+	KVM是开源的，KVM和Xen都是主推部分虚拟化功能的，性能好，根据cpu来决定是完全虚拟化还是半虚拟化，KVM的代码量远比Xen少，并且集成在内核了
+	Xen
+KVM简介：
+	KVM是linux内核里的一个模块，需要cpu支持
+	我们可以利用命令cat /proc/cpuinfo 查看一下cpu信息
+		flags： #就是说这个系统目前支持的指令集
+		vmx	#就是kvm的指令集
+	lsmod命令可以查看内核模块
+		kvm_intel	表示当前的cpu是因特尔的CPU
+		kvm		这是整个KVM的框架，想支持KVM虚拟化就要有这两个模块
+	KVM的组件qemu：
+		QEMU是一个虚拟化工具，它专门负责虚拟声卡、网卡、硬盘、总线等，通过ioctl命令与内核kvm交互完成对硬件的虚拟化支持，qemu是真正的虚拟化命令
+		qemu的相关命令安装在/usr/libexec/qemu-kvm
+		但是用qemu编写虚拟化的参数想当麻烦
+	KVM的组件libvirt：
+		是因为qemu管理命令太麻烦，开发人员又开发了这个组件，它是一个对虚拟化管理的接口和工具，
+		提供用户端程序virsh,virt-install,virt-manager,virt-view与用户交互，virt-manager就是虚拟机图形化管理工具		
+	安装KVM虚拟化平台：
+		必备软件
+			qemu-kvm(硬件仿真层)、
+			libvirt-daemon(libvirtd守护进程，我们与它交互来操作虚拟机)、
+			libvirt-client(提供客户端管理命令)、
+			libvirt-daemon-driver-qemu(驱动程序)libvirt不仅能管理KVM虚拟机，还能管理VMvare等虚拟机，你装谁的驱动，它就管理谁，这个就是kvm的驱动程序
+		在linux里，这些软件默认都是装好的
+
+************************************************************************************************************************************************************************
+
+KVM虚拟化的组成：
+	它KVM模块就是最底层，qemu就是中间层，libvirt就是用户接口层
+	内核虚拟化模块（KVM）
+	系统设备仿真（qemu）
+	虚拟机管理程序（libvirt）
+一个虚拟机由两个部分组成：
+	一个XML文件（虚拟机配置声明文件）存放在/etc/libvirt/qemu
+	一个磁盘镜像文件(虚拟机的硬盘）存放在/var/lib/libvirt/images	虚拟机的所有数据不就存到硬盘里吗	
+
+	！！！！这两个文件的前缀名称必须一致！！！
+
+Virsh命令管理虚拟机：
+	已经安装好的KVM想使用libvirt管理工具，需要先启动服务systemctl start libvirtd
+		可选功能：
+			virt-install	#系统安装工具，给虚拟机装系统的工具
+			virt-manager	#图形管理工具
+			virt-v2v		#虚拟机迁移工具，就比如说你有一个vmvare的虚拟机想迁移到KVM里，就用这个工具
+			virt-p2v		#物理机迁移工具，想把物理机的数据迁移到kvm里就用这个工具
+	virsh命令工具：
+		提供管理各个虚拟机的命令接口
+		支持交互模式，查看/创建/停止/关闭
+		如果你用图形工具管理，可能不是很方便，比如说你想远程管理别人linux系统里的虚拟机，你图形化就不好使，而且生产环境里都不装图形的
+		输入命令virsh进入kvm虚拟化管理命令行
+	在virsh命令行里：
+		如果不想进入vrish交互，也可以用 virsh 指定命令 非交互的操控虚拟机，例如：virsh --list，非交互的就特别适合写脚本啊
+		help					：可以查看所有相关命令
+		list --all				：可以查看当前所有虚拟机的运行情况，如果不加--all就是只看开机的虚拟机
+		list --all --name			：只显示所有虚拟机的名字
+		nodeinfo				：查看真机信息的
+		start 虚拟机名称			：开机虚拟机
+		reboot 虚拟机名称			：重启虚拟机
+		shutdown 虚拟机名称			：关机虚拟机
+		destory				：强制关机，就是拔电源，但容易造成数据丢失
+		autostart 虚拟机名称		：把指定虚拟设置成开机自启动
+		autostart --disable 虚拟机名称	：把指定的虚拟机开机自启动功能关闭
+		consoel 虚拟机名称			：可以直接连接这个虚拟机，而不需要ssh 指定ip来连这个虚拟机
+		dominfo 虚拟机名称			：可以查看指定虚拟机的详细信息，包括是否可以开机自启动		
+		net-list --all			：列出所有虚拟网络
+		edit 虚拟机名称			：修改虚拟机配置
+知识点补充：
+	/proc/sysrq-trigger这个文件是为了给用户测试内核崩溃的，你随便往里写个东西，虚拟机内核就崩溃了		
+	screen 分屏显示工具，没有就装一个
+		ctrl+a（呼叫功能建）然后shift+s	这是横着分屏
+		ctrl+a（呼叫功能建）然后|		这是竖着分屏	
+		想在另外一个分屏上打字ctrl+a然后tab切换到另外一个分屏上，然后ctrl+a然后按c就可以打字了	
+	我们输入virsh不是进入自己本机的虚拟机操作命令行了吗，想要远程连接别人的虚拟机环境可以：
+		virsh -c qemu+ssh://172.40.56.8/system	#这样就可以远程控制别人机器里的虚拟机了
+
+************************************************************************************************************************************************************************
+
+虚拟机的磁盘镜像文件格式：
+	RAW：磁盘读写效率高，占用空间大
+	QCOW2：KVM默认使用的类型，读写效率较低，占用空间小，支持压缩，支持后端盘复用（它默认会将最原始的磁盘保留，并复制一份，），支持快照
+		后端盘复用：它默认会将最原始的磁盘数据保留，并复制一份，然后修改只修改这个复制的，不修改原始的，这样原始的就能复用从而快速创建新的虚拟机
+管理QCOW2镜像文件的命令：
+	完整的格式：qemu-img 命令 参数 块文件名称 大小
+		其中常用的命令：
+		create：创建一个磁盘
+		convert：转换磁盘格式
+		info：查看磁盘信息
+		snapshot：管理磁盘快照
+	创建虚拟磁盘：
+		qemu-img create -f qcow2 /var/lib/libvirt/images/node.img 20G	
+			#创建一个虚拟磁盘叫f1.img，它的最大存储容量是20G,它的文件系统是qcow2
+			#不过我们实际去看这个盘的大小时，它只显示当前存储多少数据，存了多少数据它就是多大，它最多能存储我们设置的20G容量
+			#它虽然最大能存到20G，但是创建的时候，其实只是给了它几百K的空间
+			#qcow2创建的镜像文件，就是稀疏文件类型
+			#/var/lib/libvirt/images这个路径是存放虚拟机磁盘镜像的路径，为了省事最好切换到这个路径下去做相关的磁盘镜像操作
+		qemu-img create -f raw /var/lib/libvirt/images/node.img 20G	
+			#这你去看，它文件的大小就是20G，你是真的把20个G空间给它用于创建虚拟硬盘了
+			#raw类型的文件就是稠密文件
+			#/var/lib/libvirt/images这个路径是存放虚拟机磁盘镜像的路径，为了省事最好切换到这个路径下去做相关的磁盘镜像操作
+	qcow2提供的COW技术：
+		如果我们创建一个镜像文件a时，想让它包括其它虚拟机的镜像文件b的内容该怎么办：
+			这个其它虚拟机里的镜像文件b就叫做后端盘，你自己创建的镜像文件a就是前端盘
+			当我们想访问b里的数据的时候，会先找a，a里没有才会去找b，但是我们无法对b盘里的数据进行任何修改操作
+			我们只能看到b里的数据，但是如果我们把b里数据拷贝到a里的话，我们需要b的数据时，就不用去找b了，直接a就可以给我们返回数据了
+			这个复制b的数据现在不是存放在a里了吗，那么我们就可以对这个数据进行修改操作了
+			这个复制b数据的操作，是在我们想修改b里的数据时自动发生的！所以我们的感觉是这个b的数据也可读可写，实际上b这个后端盘的数据根本没变化
+			之所以能实现这个功能，都是qcow2这个文件系统实现的！
+			
+		创建附加后端盘的镜像文件命令(去/var/lib/libvirt/images目录里执行命令)：
+			qemu-img create -b 后端盘镜像文件名称 -f qcow2 f1.img 20G	
+			#后端盘的镜像文件不在这个目录里就写绝对路径
+			#前端盘容量必须大于后端盘容量！！！！
+		就比如我们现在想快速创建一个虚拟机，就可以用一个空的前端盘，加一个有文件系统的后端盘创建磁盘镜像(去/var/lib/libvirt/images目录里执行命令)：
+			qemu-img create -b /root/桌面/888第四阶段软件包/node.qcow2 -f qcow2 f1.img 20G
+			#这个新创建的镜像文件，虽然du -sh看起来只有196K，但实际上它可是包含了一个好几G的后端盘的！
+			#这个新创建的磁盘镜像文件，就可以作为新的虚拟机的磁盘镜像文件
+			#当然要想使用这个镜像文件，需要去改虚拟机的xml配置文件，指定开机加载这个磁盘镜像才可以！
+	查看虚拟磁盘的信息：
+		qemu-img info 虚拟磁盘名
+		显示信息如下：
+			image: f1.img
+			file format: qcow2	#文件格式
+			virtual size: 20G (21474836480 bytes)	#最大存储空间
+			disk size: 196K		#当前我这个磁盘镜像占用了多少空间
+			cluster_size: 65536
+			backing file: /root/桌面/888第四阶段软件包/node.qcow2	#这个就是显示的后端盘信息
+			Format specific information:
+			    compat: 1.1
+			    lazy refcounts: false
+		补充：du -sh 目录或者文件名 命令可以用来统计文档使用了多少空间
+
+************************************************************************************************************************************************************************
+
+关于虚拟机的网络：
+		两台虚拟机想通信，是需要连接虚拟交换机的，没有交换机它们怎么通信，默认这个虚拟交换机是个三层交换机！
+		而我们下面做的操作，生成一个虚拟交换机，它会出现在真机上，它像是一张网卡，其实它是交换机，然后每台虚拟机在配置文件中都是连着这个虚拟交换机的，也就是这张网卡
+		虚拟交换机的启动命令(virsh里)：net-start
+		虚拟交换机的关闭命令(virsh里)：net-destory
+	virsh管理虚拟网络：
+		net-list 			#查看虚拟网络
+		net-define 交换机名.xml	#创建虚拟网络
+		net-underfine 交换机名	#删除虚拟网络
+		net-start 交换机名		#启动虚拟网络
+		net-destroy 交换机名	#停止虚拟网络
+		net-edit 交换机名		#修改交换机网络的配置
+		net-autostart 交换机名	#设置虚拟网络开机自启动
+	虚拟交换机的配置文件：必须存放在/etc/libvirt/qemu/networks/ 里面,以.xml结尾
+		我们打开一台目前存在的虚拟交换机的配置文件 net-edit 交换机名称
+		内容如下（修改方法和vim一样）：
+		<network>
+		  <name>virbr0</name>						#交换机的名字
+		  <bridge name='virbr0' stp='on' delay='0'/>		#这个名字是我们用ifconfig看到的名字
+		  <domain name='virbr0'/>					#这个是用virsh net-edit 后面要写的名字，这仨名字写一样的！
+		  <uuid>d0aeef0a-d6e4-446e-b889-eb339779b032</uuid>	#可以不写
+		  <forward mode='nat'/>						#是否支持nat地址转换，支持nat就能上网		  
+		  <mac address='52:54:00:72:3e:c7'/>				#可以不写
+		  <ip address='192.168.4.1' netmask='255.255.255.0'>	#这是交换机的ip地址和子网掩码
+		    <dhcp>
+		      <range start='192.168.4.2' end='192.168.4.254'/>	#表示这个虚拟交换机支持dhcp
+		    </dhcp>
+		  </ip>
+		</network>
+	如果我们想自己创建虚拟交换机，就要写一个这样的配置文件，然后放到指定目录下面，但是此时libvirt管理端还不识别它！还需要让libvirt识别它才可以：
+		virsh net-define /etc/libvirt/qemu/networks/*.xml 
+			#执行完这条命令之后，virsh net-list --all 就能看到这个交换机了
+			#以后要修改这个虚拟交换机的配置文件，就只能用命令virsh net-edit 虚拟交换机名称
+		然后 virsh net-start 交换机的名称 	启动它就可以了
+		还可以给这个虚拟交换机设置开机启动 virsh net-autostart 交换机名
+
+	现在我们虚拟交换机也启动了，还需要告诉虚拟机连接这个虚拟交换机才行
+	这个让虚拟机与交换机认识的步骤需要修改完虚拟机的xml配置文件之后才能做！看下面的部分！
+				
+************************************************************************************************************************************************************************
+
+虚拟机的第二个组成部分：XML配置文件
+	xml配置文件定义了虚拟机的名称、cpu、内存、虚拟磁盘、网卡等各种参数设置
+	默认位于/etc/libvirt/qemu/虚拟机名称.xml
+查看现有虚拟机的xml配置文件：
+	virsh dumpxml 虚拟机名
+备份现有虚拟机的xml配置文件：
+	virsh dumpxml 虚拟机名 > 虚拟机名.xml
+这个虚拟机配置文件不是普通人写的，我们有模版，模版是教学环境提供的，在/opt/nsd1811/node.xml
+	拷贝这个模版到/etc/libvirt/qemu/node.xml 然后修改这个配置文件，要求名称要与磁盘镜像名称一致
+	vim打开/etc/libvirt/qemu/node.xml
+		我们来查看和修改一些xml文件中指定的行：
+			<domain type='kvm'>	#这是指定域名，虚拟机都写kvm
+			<name>node</name>		#这是虚拟机的名字，虚拟机的名称不允许重复！
+			<memory unit='KB'>1524000</memory>			#这是内存，也就是说这是1.5GB
+  			<currentMemory unit='KB'>1524000</currentMemory>	#这两行都是定义内存的
+			<vcpu placement='static'>2</vcpu>			#这是定义虚拟机cpu的个数
+			<os>				#整个os部分，是定义系统参数的，无需修改
+				<type arch='x86_64' machine='pc'>hvm</type>	#这是定义x86_64位系统的
+				<boot dev='hd'/>		#表示从硬盘启动这个虚拟机
+				<bootmenu enable='yes'/>
+				<bios useserial='yes'/>
+			</os>
+			<features>		#这部分是负责管理电源的，无需修改
+ 				<acpi/>
+ 				<apic/>
+ 			</features>
+			<cpu mode='host-passthrough'>	#这一部分是定义cpu模式的，这个模时就是半虚拟化的模式，用的是真机的cpu
+			</cpu>
+			<clock offset='localtime'/>	#这是告诉虚拟机用真机的时间做时间
+			<on_poweroff>destroy</on_poweroff>	#下面这3条就是定义3种开机还是关机的行为
+			<on_reboot>restart</on_reboot>
+			<on_crash>restart</on_crash>
+			<devices>	#这底下的一堆都是硬件仿真层
+			...
+			<disk type='file' device='disk'>		#disk是虚拟磁盘的
+			<driver name='qemu' type='qcow2'/>		
+			<source file='/var/lib/libvirt/images/node.img'/>		#这就是指定虚拟磁盘镜像文件的位置
+			<target dev='vda' bus='virtio'/>
+			</disk>
+			<interface type='bridge'>	#这部分是虚拟网卡的！
+			<source bridge='vbr'/>		#这是告诉虚拟机跟哪个虚拟交换机连接的！虚拟机把真机上的那张虚拟网卡当虚拟交换机！
+			<model type='virtio'/>		#这是驱动，基本上都用这个驱动
+			</interface>
+			<channel type='unix'>		#这是虚拟总线型设备的，比如鼠标啊，键盘啊，这些都不用改
+			<target type='virtio' name='org.qemu.guest_agent.0'/>
+			</channel>
+			<console type='pty'>		#这是告诉虚拟机打开console口，不然你真机用console命令连不上虚拟机
+			<target type='serial'/>
+			</console>
+			<memballoon model='virtio'></memballoon>	#这是驱动
+
+			...
+			</devices>
+	配置文件改完了，需要根据这个配置文件创建虚拟机了，还有启动虚拟机
+		virsh define /etc/libvirt/qemu/node.xml	
+			#这个是根据配置文件创建发现虚拟机，并创建虚拟机的命令，等用这个命令识别完虚拟机之后，再想改xml配置文件就不能用vim改了，必须用命令！
+			#修改虚拟机配置的命令：virsh edit 虚拟机名称 
+		virsh start 虚拟机名称	#这是启动虚拟机
+
+*************************************************************************************************************************************************************************
+
+#这个创建的虚拟机密码是123456
+#自动创建虚拟机的脚本：这个脚本不完善，要先做完桥接网卡才行！
+	#!/bin/bash
+	qemu-img create -f qcow2 /var/lib/libvirt/images/node$1.img -b /var/lib/libvirt/images/node.qcow2
+	cp /etc/libvirt/qemu/node.xml /etc/libvirt/qemu/node$1.xml
+	sed -i "9s/node/node$1/" /etc/libvirt/qemu/node$1.xml	#改名字
+	sed -i "10s/6/$1/" /etc/libvirt/qemu/node$1.xml		#改xml的UUID！讲道理后端盘的这个xml配置文件中这一行应该删除，UUID它会自己生成
+	sed -i "33s/node/node$1/" /etc/libvirt/qemu/node$1.xml	#这是指定磁盘镜像
+	virsh define /etc/libvirt/qemu/node$1.xml			
+	virsh start node$1
+
+*************************************************************************************************************************************************************************
+
+给虚拟机装系统用的是图形装的系统
+给虚拟机装系统，特别简单，一顿下一步，有一个后端盘之后就不用特么再装系统了，都用这个后端盘就垮垮的克隆就可以了！什么pxe装机也可以看之前的文档
+注意给虚拟机装系统一定要装英文的，装中文的linux系统，做硬盘扩容时会出错
+企业中的yum源都是用centos的，因为rhel是要花钱的
+
+*************************************************************************************************************************************************************************
+
+全新的虚拟机应该做什么：	
+	给虚拟机配置yum源	
+	禁用selinux
+	卸载防火墙与NetworkManger(这个软件和openstack冲突，这个软件就是提供nmcli命令的)
+		因为企业里有跳板机，只要跳板机有防火墙就行了，其它的在企业里的服务器都是没有公网ip的，只有跳板机既能连机房里的服务器，又能连公网
+			yum remove firewall-*
+		企业中selinux这个功能也是不需要的。改一下配置文件为disabled即可
+		
+	你新的机器里，连ifconfig命令都没有，可以yum provides */ifconfig
+	常用软件包：vim net-tools(这个是ifconfig) psmisc（这是pstree） tree lftp lrzsz（这是zip）
+
+	给虚拟机配ip，不用nmcli命令了，改配置文件：
+		/etc/sysconfig/network-scripts/ifcfg-网卡名称 	#这个就是网卡的配置文件，想要几张网卡，创建几个这样的文件，可以拿下面的配置当模版哦！
+		内容如下：
+		# Generated by dracut initrd
+		DEVICE="eth0"
+		TYPE=Ethernet
+		ONBOOT="yes"
+		BOOTPROTO="dhcp"	#这是配置dhcp，动态获取ip的
+		把UUID和mac地址的行删除掉，它都会自己产生，改成上面的样子即可，这是动态获取IP的网卡配置
+	指定IP的静态网卡信息配置：
+		DEVICE="eth0"
+		ONBOOT="yes"
+		BOOTPROTO=static			#如果你要配置网卡聚合，这里就要写none
+		TYPE=Ethernet
+		IPADDR="192.168.4.100"		#网卡ip
+		NETMASK="255.255.255.0"		#子网掩码
+		GATWAY="192.168.1.254"		#这是指定路由，也就是默认网关！但是一台虚拟机只允许一张网卡指定网关！所以当你有多张网卡时，一定要把网关删除！
+	改完之后，重启一下这个网卡服务systemctl restart network
+	
+	在生产环境中，很有可能碰到一种加载空路由的情况，用 ip route show 命令查看一下，加载的路由
+	干掉加载的空路由的方式：vim /etc/sysconfig/network
+		写一行：NOZEROCONF=yes	#不配置空的配置文件
+		然后再重启一遍服务systemctl restart network
+
+	现在还有一个问题，就是虚拟机在安装完系统之后，自己会生成一个 /etc/default/grub 配置文件，这个文件没有指定开放console口，所以我们无法用virsh console 命令连接虚拟机
+	为了解决这个问题，在官方上下载一个指定开放console口的grub配置文件（这个文件已经下载到了/opt/nsd1811/grub），传给虚拟机，替换掉系统默认的即可
+		然后这个虚拟机要重新启动这个grub服务，使其开放console口，命令：
+			grub2-mkconfig -o /boot/grub2/grub.cfg
+
+	这个刚装完系统的虚拟机的硬盘，它挂载的方式，是硬盘的UUID，把磁盘的挂载方式改称虚拟硬盘的绝对路径（在虚拟机里的路径）,这样方便管理：
+		vim /etc/fstab
+		/dev/vda1 xfs defaults 0 0
+
+	然后为了保证虚拟机的硬盘可以扩容，还需要安装一个支硬盘扩容的软件叫cloud-utils-growpart   y确认
+		做虚拟机扩容，linux系统的语言环境必须是英文才可以，如果你不是英文的可以用命令切换成英文的：
+			export LANG=en_US
+		我们创建虚拟机的磁盘镜像文件时，给它分配了20个G，但是我们lsblk去看磁盘状态时，发现第一个分区只有2个G，这个时候，就需要给这个分区做扩容了
+			命令：growpart /dev/vda 1  #我要给哪个块设备的第几个分区做扩容
+		但是此时只是扩容了块设备的空间，还需要扩容文件系统的空间：
+			xfs_growfs /	#给虚拟机的整个/扩容文件系统，因为我们的根就放在这个分区里，做虚拟机时，也只划分了一个分区
+		这样我们再去看这个分区/dev/vda1 就会发现这个设备已经ok了
+	
+	为全新的虚拟机配置主机名/etc/host(这样虚拟机之间就可以通过主机名ping通彼此)，和指定DNS服务器/etc/reslov.conf（文件里不能留search那一行），配置yum源
+
+***********************************************************************************************************************************************************************
+
+	把关机的虚拟机磁盘挂载到真机上，方便写脚本：
+		命令：guestmount -a /var/lib/libvirt/images/node1.img -i /mnt	#把磁盘镜像挂载到真机
+		然后可以：chroot /mnt	#把虚拟机当做真机操作，这样方便写脚本，退出虚拟机，输入exit即可
+		想卸载就umount /mnt
+这里补充一个非常重要的知识点：
+	如果虚拟机的后端盘发生数据变化，那么所有的前端盘都费费了，必须删除重新创建！所以后端盘能不改就一定不要改！
+
+		

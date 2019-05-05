@@ -99,7 +99,7 @@ Ceph几种共享方式：
 	查看ceph状态，验证
 
 	ceph部署
-	yum -y install ceph-deploy
+	yum -y install ceph-deploy		#这个ceph-deploy是rhel操作系统中的脚本，在centos操作系统里无法使用！
 	ceph-deploy  --help可以查看使用帮助
 	创建目录
 	mkdir ceph-cluster 起什么名字无所谓

@@ -1,0 +1,411 @@
+一、系统审计
+	我们会在系统上设置一些规则，如果哪个用户触犯了这些规则，审计服务就会将其记录在日志中，生产环境中用审计功能来规范员工的操作！
+	审计功能不会提供额外的安全防护，但它会发现并记录违反安全策略的人及对应的行为
+	审计能够记录的日志内容：
+		日期与事件、事件结果
+		触发事件的用户
+		所有认证机制（就是需要输入用户名和密码的服务）的使用都可以被记录，如ssh等
+		对关键数据文件的修改行为等
+	审计的案例：
+		监控文件访问
+		监控系统调用
+		记录用户运行的命令
+		审计可以监控网络访问行为
+		ausearch工具可以过滤审计日志
+		aureport工具可以生成审计报告
+	审计服务：
+		audit	这个是红帽系统自带的命令行的审计服务，也有图形的审计服务，但是需要另外安装别的软件，比如JUMP SERVER
+		所需软件包	audit
+		服务的主配置文件	/etc/audit/auditd.conf
+		审计服务用来记录的日志文件	/var/log/audit/audit.log
+	查看审计服务的运行状态：
+		systemctl status audit
+		默认这个服务安装之后就是运行的，并且它没有停止命令，你只能给它设置开机自启动systemctl enable auditd和启动systemctl start auditd
+	配置审计服务：
+		管理源root定义审计规则，可以用命令临时定义审计规则（立即生效），也可以改配置文件永久定义
+		审计服务的配置文件：
+			vim /etc/audit/auditd.conf
+			log_file = /var/log/audit/audit.log	//指定了日志文件位置	
+		命令定义规则：auditctl --help	可以查看所有的相关命令
+			auditctl -s	//查看状态信息 
+			auditctl -l	//查看已有的审计规则
+			auditctl -D	//清除所有的审计规则
+			auditctl -w path -p permission -k key_name 		
+				#这个path是你想监控的路径，你可以写一个文件或目录的绝对路径，那么它就会监控这个文件或者目录的发生的一切情况，
+				#你也可以写一个命令程序的绝对路径，谁用了这个命令，也会被记录下来。
+				#-p是指动作，虽然是权限，但是我们可以理解成动作，
+				#permission可以是r(读) w(写) x(执行) a(文件或目录的属性发生变化)，
+				#如果我-w那里指定的是命令程序，那么就看有没有人使用过命令，也就是监控命令文件的x
+				#如果我-w那指定的是一个文件或者目录，就监控这个文档有没有过-p指定的这些动作
+				#-k的意思是给我定义的这条规则起个名字，这样方便在日志中查看
+			例如：
+			auditctl -w /etc/passwd -p wa -k haha	#给我监控这个文件，只要它发生过读和属性变化，就给我记录下来，这条规则叫haha
+			auditctl -w /usr/sbin/fdisk -p x -k hehe	#这就是监控命令程序文件是否被执行过			
+		规则配置文件 定义规则：
+			vim /etc/audit/rules.d/audit.rules
+			把规则写在末尾即可
+			-w /etc/passwd -p wa -k lala	#这就是在配置文件中定义规则的写法，我要监控这个文件的w和a，并且这条规则叫lala
+		用命令检索日志文件：
+			当我们对审计规则监控的文件做出相应的操作时，审计服务就会将其记录在日志里，我们用ausearch命令就可以检索日志信息
+			ausearch -k haha -i	#从日志文件中检索这条审计规则相关的信息-i的意思是交互式操作，也可以不写这个选项
+			ausearch -te 时间 -k haha #筛选出指定结束时间的审计日志信息，要写时间戳时间（也就是从1970年1月1日到截止时间所经历的秒数）
+			ausearch -ts 时间 -k haha #筛选出指定开始时间的审计日志信息
+		审计日志分析：
+			type=		#这列代表类型，其中比较常见的值CWD(命令调用) PROCTIFLE(程序调用) PATH(路径调用)
+			msg=		#系统时间，也就是这条信息生成的时间，它是用时间戳表示的，也就是从1970年1月1日到截止时间所经历的秒数
+			cwd=		#这条审计规则被记录时，对方是在什么目录下
+			arch=		#系统架构也就是多少位	c000003e就代表x86_64，是16进制数表示的
+			success=	#这个事件是否执行成功了
+			a(0-3)=	#表示的是用户执行命令时后面跟的参数或者选项，就比如说ls -l这个-l，不过它显示也是16进制数显示的
+			ppid=		#表示的是记录的这个程序的父进程ID
+			pid=		#也就是记录的这个程序的进程ID
+			auid=		#它记录的是，如果触发这个审计规则的用户，是从别的用户su过来的，则记录的它su之前的用户uid，如果没有则记录这个用户的uid
+			uid=		#这是被审计服务监控到的用户ID
+			gid=		#这是被审计服务监控到的用户的组ID
+			tty=		#这个用户是从哪个终端执行的命令
+			exe=		#用户实际执行程序的完整路径
+			key=		#就是这条审计规则的名字
+			comm=ls	#什么命令导致的审计记录，这里是ls，ls访问读取了这个目录，故记录了审计日志。
+
+二、加固常见服务的安全
+	1.网站服务安全（nginx、tomcat）
+		nginx服务安全：
+			1）删除不需要的模块：
+			因为我们安装nginx时是源码装的，装的时候会装很多模块，但是有些默认安装的功能模块是不安全的
+				我们以安装nginx为例：
+				[root@proxy ~]# yum -y install gcc pcre-devel openssl-devel	#安装依赖包
+				[root@proxy ~]# tar -xf nginx-1.12.tar.gz			#解压源码包
+				[root@proxy ~]# cd nginx-1.12				#进到安装包目录下
+				[root@proxy nginx-1.12]# ./configure \		#编译安装nginx
+				>--without-http_autoindex_module \         	#禁用自动索引文件目录模块
+				>--with-http_ssl_module（做加密的功能）           	#开启SSL加密功能   模块化设计！将功能分开！只装对应的功能，极大的节约内存！
+				[root@proxy nginx-1.12]# make
+				[root@proxy nginx-1.12]# make install
+			如果我们nginx已经安装过这个模块了，那么我们可以去改配置文件，来禁用相关的模块：
+				vim /usr/local/nginx/conf/nginx.conf
+				想要哪个网站禁用这个模块，就在哪个server里写，不过现在默认这个模块虽然会被安装，但是不会被启用！
+				server {
+					autoindex on;	
+					#on就是启用autoindex模块的功能，off就是禁用
+					#这个模块的功能就是开器文件目录索引，比如说你192.168.4.1/bbs这个目录是存放网页的目录，用户如果输入的是这个地址，那么就会看到所有的网页文件
+					#为了避免这个情况的发生，所以我们要把这个模块禁用掉，不过现在的nginx已经默认不开放这个功能了！但是默认会把这个模块装上！			
+				}
+				：wq
+				我们可以用nginx提供的命令测试，刚才的配置文件书写有没有问题
+					/usr/local/nginx/sbin/nginx -t			#检测配置文件书写是否正确，如果写错了，它会告诉你哪错了
+					/usr/local/nginx/sbin/nginx			#启动服务
+					/usr/local/nginx/sbin/nginx -s stop		#停止服务
+					/usr/local/nginx/sbin/nginx -s reload	#重启服务
+
+			2）隐藏nginx版本信息：
+				默认Nginx会显示版本信息以及具体的版本号，这些信息给攻击者带来了便利性，便于他们找到具体版本的漏洞。
+				如果需要屏蔽版本号信息，执行如下操作，可以隐藏版本号。
+				vim /usr/local/nginx/conf/nginx.conf
+				… …
+				http{
+				     server_tokens off;                            //在http下面手动添加这么一行
+				     … …
+				}
+				[root@proxy ~]# nginx -s reload
+				[root@proxy ~]# curl -I http://192.168.4.5  
+							//这条命令可以查看服务器响应的头部信息
+
+				但服务器还是显示了使用的软件为nginx，通过如下方法可以修改该信息：
+					vim +48 src/http/ngx_http_header_filter_module.c
+						//注意：vim这条命令必须在nginx-1.12源码包目录下执行！！！！！！+48是把光标定位到48行的意思
+				该文件修改前效果如下：
+					static u_char ngx_http_server_string[] = "Server: nginx" CRLF;
+					static u_char ngx_http_server_full_string[] = "Server: " NGINX_VER CRLF;
+					static u_char ngx_http_server_build_string[] = "Server: " NGINX_VER_BUILD CRLF;
+				下面是我们修改后的效果，其实你可以随便改，只要不是原文件信息就可以：
+					static u_char ngx_http_server_string[] = "Server: Jacob" CRLF;
+					static u_char ngx_http_server_full_string[] = "Server: Jacob" CRLF;
+					static u_char ngx_http_server_build_string[] = "Server: Jacob" CRLF;
+				修改完成后，再去编译安装Nignx，版本信息将不再显示为Nginx，而是Jacob
+					[root@proxy nginx-1.12]# ./configure
+					[root@proxy nginx-1.12]# make && make install
+					[root@proxy nginx-1.12]# killall nginx
+					[root@proxy nginx-1.12]# /usr/local/nginx/sbin/nginx           //启动服务
+					[root@proxy nginx-1.12]# curl -I http://192.168.4.5            //现在再查看版本信息验证
+		
+				这里补充一下隐藏apache服务版本号的方法，在apache主配置文件中写入一行
+					server_tokens off		#隐藏版本号，然后重启服务即可
+
+			3）限制nginx服务接收1台服务器的并发量：
+				限制1台客户机最大的访问次数
+				DDOS攻击者会发送大量的并发连接，占用服务器资源（包括连接数、带宽等），这样会导致正常用户处于等待或无法访问服务器的状态。
+					[root@client ~]# ab -c 100 -n 100  http://192.168.4.50/		
+								#这是压力测试命令，之前nginx讲过，也就是对1台4.50nginx服务器发送100个连接数-c，100个访问请求-n，
+								#ip地址后面还要跟路径，/是指定路径，然后查看其结果
+				经过压力测试我们发现，一台客户机可以无限制的发送多次连接与请求，而nginx服务器只要能处理的过来就给客户机服务，这样就很容易被ddos攻击！
+						
+				Nginx默认就提供了一个ngx_http_limit_req_module模块，可以有效降低DDOS攻击的风险，操作方法如下：
+					[root@proxy ~]# vim /usr/local/nginx/conf/nginx.conf
+						… …
+						http{
+						… …
+						limit_req_zone $binary_remote_addr zone=one:10m rate=1r/s;	
+							#写一行这个
+							#limit_req_zone定义请求区域的大小 
+							#$binary_remote_addr这个是内置变量，就是指客户端连接nginx时的地址
+							#zone=one:10m nginx会从服务器上开辟10m内存空间，来存储客户端地址，并给这个空间命名为one
+							#rate=1r/s;告诉所有网站针对同一个客户端ip地址的请求，每秒只处理一个请求，如果还有多余的请求没处理，就放到one里
+							#1M可以存储8千个IP信息，10M可以存储8万个主机连接的状态，容量可以根据需要任意调整
+						    server {
+							listen 80;
+							server_name localhost;
+							limit_req zone=one burst=5;
+								#再写一行这个
+								#如果客户端访问的是这个网站，它一共发送了10个访问请求，其中1个被即时处理了，还剩下9个	
+								#告诉这个网站，只将其中的5个存放到one区域里，并慢慢处理这5个访问请求，所以说也就是一共就处理6个访问请求！
+							    }
+						}						
+						：wq
+						
+						[root@proxy ~]# /usr/local/nginx/sbin/nginx -s reload		//重启服务，看看配置项是否生效了
+			4）拒绝非法请求：
+				常见的请求方法：
+					http定义了很多方法，实际应用中一般仅需get和post
+						GET	请求指定的页面信息，并返回实体主体				
+						POST	向指定资源提交数据进行处理请求（例如提交表单和上传文件）
+						HEAD	类似于get请求，只不过返回的响应中没有具体的内容，只看网站的信息，比如版本什么的！
+						DELETE 请求服务器删除指定的页面
+						PUT	向服务器特定位置上传资料
+						...
+					我们应该配置服务，让它只接收post和get这两种访问方式！其它的访问方式都屏蔽掉
+					我们使用地址重写功能来实现！
+					没屏蔽其它访问方式之前，我们随便用一台服务器先来访问一下50看看效果：
+						curl -i -X HEAD "http://192.168.4.50"
+							#-i选项：访问服务器页面时，显示HTTP的头部信息
+							#-X选项：可以定义访问的方式
+							访问成功了说明50nginx服务没有屏蔽这些访问方式
+	
+					现在我们来改nginx的配置文件，给指定的网站设置屏蔽其它访问方式：
+						vim /usr/local/nginx/conf/nginx.conf
+							http{
+						       server {
+								 listen 80;
+							      if ($request_method !~ ^(GET|POST)$ ) {
+								     return 444;
+								#写这几行
+								#这里 ! 符号表示对正则取反，~符号是正则匹配符号
+								#$request_method 这个是变量，存储的是客户端访问的方式！
+								#也就是说当$request_method变量的值不是GET和POST判断就成立了，成立了，我就执行return 444这条命令
+								#如果用户使用非GET或POST方法访问网站，则retrun返回444的错误信息
+							       }    
+							}
+						}
+						：wq
+						[root@proxy ~]# /usr/local/nginx/sbin/nginx -s reload
+						然后你再测试即可：
+							curl -i -X HEAD "http://192.168.4.50"
+
+			5）防止缓冲区buffer溢出：
+				防止nginx的缓存溢出
+				当我们刚刚安装完的时候，nginx服务的/usr/local/nginx目录下只有conf html sbin log这几个目录
+				当客户访问过我的这个nginx服务之后，这个目录下，就会生成好多其它目录，这些自动生成的目录，就是存放不同类型缓存文件的目录！
+				这些新生成的目录，默认它们的空间都是比较小的，这就很危险，如果这些目录满了，那么再有新的数据就存不进去，新的数据就会泄露！
+				其原理就是，本来应该存进缓存里的数据，因为空间满了，而被存到别的空间里，那么如果黑客对那个空间有权限的话，数据就会泄露！
+				所以我们应该把缓存区空间调大：
+					[root@proxy ~]# vim /usr/local/nginx/conf/nginx.conf
+						http{					
+						client_body_buffer_size  1K;
+						client_header_buffer_size 1k;
+						client_max_body_size 1k;
+						large_client_header_buffers 2 1k;
+							#在http里写，把这些值调大即可
+						 … …
+						}
+						[root@proxy ~]# /usr/local/nginx/sbin/nginx -s reload	
+		tomcat服务安全：
+			我们用的是8.0.30版本的tomcat，这个版本可以看出效果
+			1） 隐藏版本信息、修改tomcat主配置文件（隐藏版本信息）
+				未修改版本信息前，使用命令查看服务器的版本信息
+				注意：proxy有192.168.2.5的IP地址，这里使用proxy作为客户端访问192.168.2.100服务器。
+				[root@proxy ~]# curl -I http://192.168.2.100:8080/xx        
+						//访问不存在的页面文件，查看头部信息，-I选项就是只看网站的头部信息！
+				[root@proxy ~]# curl -I http://192.168.2.100:8080    
+						//访问存在的页面文件，查看头部信息
+				[root@proxy ~]# curl http://192.168.2.100:8080/xx
+						//访问不存在的页面文件，查看错误信息			
+			通curl的命令我们可以看出，tomcat默认它的版本信息都是显示的，这样就很不安全
+			要想隐藏网站的版本，我们需要装一个扩展包：
+				yum -y install java-1.8.0-openjdk-devel
+				cd /usr/local/tomcat/lib/					#我们要进入到这个目录下面，因为扩展包提供的命令都在这下面
+				jar -xf catalina.jar						#这就是从这个java脚本里获取文件的命令，不是tar哦！然后会生成一个org目录！
+				vim org/apache/catalina/util/ServerInfo.properties 	#这个是程序文件
+						#根据自己的需要，修改版本信息的内容，也就是文件里面的三行server
+				vim /usr/local/tomcat/conf/server.xml			#还要修改tomcat的主配置文件
+					<Connector port="8080" protocol="HTTP/1.1"
+					connectionTimeout="20000"  redirectPort="8443" server="jacob" />
+						#改这个文件，69行这个标签，在最后添加server="jacob"这个内容
+					：wq
+				然后重启服务：
+					[root@web1 lib]# /usr/local/tomcat/bin/shutdown.sh        //关闭服务
+					[root@web1 lib]# /usr/local/tomcat/bin/startup.sh        //启动服务
+				然后我们测试一下：
+
+					当我们用浏览器访问有的页面的时候，服务器它所给我的提示信息就是主配置文件里给的名字，如果是没有的网页，它显示的就是程序文件里定义的名字
+
+					curl -I http://192.168.2.100:8080/xx
+					//访问不存在的页面文件，查看头部信息，-I选项就是只看网站的头部信息！它给的是程序文件里定义的名字
+					curl -I http://192.168.2.100:8080
+					//访问存在的页面文件，查看头部信息，它给的是主配置文件里给的名字
+					curl http://192.168.2.100:8080/xx
+					//访问不存在的页面文件，查看错误信息，它给的就是主配置文件里定义的名字
+			2）降权启动：
+				默认tomcat使用系统高级管理员账户root启动服务，启动服务尽量使用普通用户。
+				tomcat是用java写的，如果黑客有java程序的启动权限，黑客十分擅长java，
+				那么它就能支配tomcat服务了，而我tomcat默认又是root用户启动的，那么此时我的root用户就十分危险！
+				所以我要用普通用户启动tomcat
+				[root@web1 ~]# useradd tomcat
+						//添加一个与服务名同名的用户
+				[root@web1 ~]# chown -R tomcat:tomcat /usr/local/tomcat/
+						//修改tomcat目录的权限，让tomcat账户对该目录有操作权限
+				[root@web1 ~]# su - -c /usr/local/tomcat/bin/startup.sh tomcat
+						//使用su命令切换为tomcat账户，以tomcat账户的身份启动tomcat服务，
+						//-c是以哪个用户执行什么命令，就不用再切换到那个用户的命令行了
+				[root@web1 ~]# chmod +x /etc/rc.local                
+						//将该文件设置为开机启动文件，这个是设置源码服务开机自启动的脚本
+						// /etc/rc.local这个文件是服务器开机时最后调用的文件，也就是用户进系统的那一刻会调用这个文件，执行里面的命令
+						//并且让root用户有这个脚本的执行权限，因为我们不是要用root登陆服务器吗，我登陆的时候要调用这个脚本，所以我这个脚本的有执行权限啊
+				[root@web1 ~]# vim /etc/rc.local                     	//修改文件，添加如下内容
+				su -c /usr/local/tomcat/bin/startup.sh tomcat		//这样开机的时候，就会自动执行这个命令了！
+					#nginx服务也可以这样设置开机自启动！把启动命令写到这里，它就自动执行命令了！
+
+			3）在我们安装完tomcat服务的时候，它默认会有很多测试网页，如果你保留它，它很可能会暴露很多软件信息给黑客：
+				所以我们要把测试页删除掉，当然如果你工作环境中，tomcat都运行好久了，这一步就别干了，容易被老板干：
+					rm -rf  /usr/local/tomcat/webapps/*
+
+	2.数据库服务安全（mariadb，mysql的安全问题都规避掉了）
+		[root@proxy ~]# systemctl status mariadb
+				//确保服务已启动 
+		1）执行初始化安全脚本：
+			安装完MariaDB或MySQL后，默认root没有密码，并且提供了一个任何人都可以操作的test测试数据库。有一个名称为mysql_secure_installation的脚本，
+			该脚本可以帮助我们为root设置密码，并禁止root从远程其他主机登陆数据库，并删除测试性数据库test。
+				[root@proxy ~]# mysql_secure_installation
+					//执行初始化安全脚本
+				执行该脚本会提示以下配置项：
+					1.先让你输入root的旧密码，有就输入，没有就回车，
+					2.然后y确认，输入两次要输入的密码
+					3.Remove anonymous users	问你是否移除匿名用户，移除就输入y	
+					4.Disallow root login remotely	问你是否禁止root远程连接，禁止就输入y
+					5.Remove test database	问你是否删除测试库
+					6.Reload privilege	问你是否刷新权限列表
+		2）密码安全：
+			刚装的mariadb数据库，没有密码，手动修改MariaDB或MySQL数据库密码的方法：
+
+				[root@proxy ~]# mysqladmin -uroot -predhat password 'mysql'
+					//修改密码，旧密码为redhat，新密码为mysql，不过命令行下改，会留下历史命令
+
+				[root@proxy ~]# mysql -uroot -pmysql		#登陆数据库
+				MariaDB [(none)]>set password for root@'localhost'=password('redhat');	#用sql语句改相应的用户密码
+		
+			不过我在数据库里面输入的命令，其实历史记录也会被记录在 ~/.mysql_history ,所以应该定期去删除这个文件！避免被人看到
+			我命令行下的历史命令，也应该勤删，免得被人抓到马脚，history -c是清除历史记录命令~/.bash_history是历史记录文件
+				
+				还有就是我数据库的binlog日志，如果不做主从不要开它，它也会记录sql操作啊！
+				为了数据安全，我们要定期给数据库备份
+		3）关于远程账户：
+			我们应该给可以远程访问数据库的用户设置权限，只允许他查询和写入数据！
+			还有一点，数据库的数据传输默认是明文的，也就是说别人如果抓到数据库相关的数据包就很危险
+			不过我们数据库一般都是在内网的，都是客户访问网站，网站设置了公私钥，客户在网站上访问数据库（就像注册帐号啥的），别人抓包抓不到
+			所以不要把数据库暴露在公网，否则别人抓包就很危险！
+	
+三、Linux安全之打补丁
+	为什么要打补丁：
+		程序是人设计出来的，总是会有这样那样的问题与漏洞，目前的主流解决方法就是为有问题的程序打补丁，升级新版本。
+		在Linux系统中diff命令可以为我们生成补丁文件，然后使用patch命令为有问题的程序代码打补丁。
+		所需软件包diff 和 patch
+	diff的原则是：
+		告诉我们怎么修改第一个文件后，可以得到第二个文件
+	diff命令的基本用法：
+		选项：
+		-u 输出统一内容的头部信息（打补丁使用）
+		-r 递归对比目录中的所有资源（可以对比目录）
+		-a 所有文件视为文本（包括二进制程序）
+		-N 无文件视为空文件（空文件怎么生成第二个文件）
+	打补丁的方法：
+		1） 编写两个版本的脚本，一个为v1版本，一个为v2版本。
+		[root@proxy ~]# vim test1.sh                                //v1版本脚本
+		#!/bin/bash
+		echo "hello wrld"
+		echo "test"
+		[root@proxy ~]# vim test2.sh                                //v2版本脚本
+		#!/bin/bash
+		echo "hello the world"
+		echo "test file"			
+		
+		就好比这是两个应用程序，我第二个版本是基于第一个版本开发的，我再给用户传的时候，我不应该传整个v2这一整个程序，我只需要把v2和v1里不同的部分做成补丁给用户即可！
+		diff这个工具就是将两个程序做比较，然后将其不同的部分做成补丁！
+
+		2） 使用diff命令语法
+		使用diff命令查看不同版本文件的差异：
+		[root@proxy ~]# diff  ~/test1.sh ~/test2.sh                     //查看文件差异，用第一个和第二个去比，看怎么才能让第一个文件生成第二个文件,写绝对路径！
+		显示如下：
+			@@ -1，3 +1,3 @@
+			 #!/bin/bash
+			-echo "hello world"
+			-echo "test"
+			+echo "hello the world"
+			+echo "test file"
+
+		[root@proxy ~]# diff -u ~/test1.sh ~/test2.sh                 //查看差异，包含头部信息，也就是具体的该怎么改，写绝对路径！
+		显示如下：
+			--- ~/test1.sh    2018-02-07 22:20:02.723971251 +0800	//意思就是说你要删去test1里面的内容
+			+++ ~/test2.sh    2018-02-07 22:20:13.358760687 +0800	//然后加上test2里的内容到test1
+			@@ -1,3 +1,3 @@		//删去test1里面的第1行和第3行，然后加上test2里面的第一行和第3行到test1里，下面是具体的显示！
+			 #!/bin/bash
+			-echo "hello world"	//带-号的就是要删去的，带+就是后填上去的，什么符号都没有的，就是不变的！
+			-echo "test"
+			+echo "hello the world"
+			+echo "test file"
+
+		那么我们就可以把输出在屏幕上的信息重定向到一个文件里，那么这个文件就是补丁程序!一般我们这个文件的后缀名都是.patch!
+			diff -u ~/test1.sh ~/test2.sh > ~/one.patch	#必须要加-u选项	
+			我们只要把这个补丁程序发给用户即可，因为这个补丁程序，记录的都是差异，不需要的变化的内容没有记录，
+			所以我们不用把整个test2.sh这么大的开发文件发给用户！而是把这个补丁发给客户即可！
+		那么我们把test1.sh给另一台服务器，作为原始版的程序，然后再给它传一个one.patch补丁程序：
+			当然为了以后的程序开发，打补丁的操作，我们也应该在自己的服务器上进行一遍，这样才能做到和客户端的程序同步啊！
+			打补丁的方法：
+			想要打补丁，需要有patch软件
+				命令：
+				patch -i path -p0			
+					#-i是指定补丁文件的绝对路径！-p0的意思是说补丁文件生成时与源文件在同一个目录下！
+					#我们不用指定源文件位置，我们要进入源文所在的位置才行！
+					#我们需要去看补丁文件，看看这个补丁是给哪个目录打补丁，我们就要进入到哪个目录下！或者说补丁文件要给哪个文件打补丁，也要进入到哪个文件下去！
+
+		现在来看看，如果是基于两个差异目录下生成的补丁文件的效果：
+			刚才的是两个文件在同一个目录，现在是有俩目录，俩目录里面的文件存在不同！
+			现在我有两个目录 /a1 和 /a2 
+			它们之间的差异：
+				a2比a1多个文件（tmp.txt） ； a2和a1中的二进制文件有差异(find文件) ； 
+			此时我们实际是要给目录下的差异文件打补丁，而不是给目录打补丁！
+				那么生成补丁的方法：
+				[root@proxy /]# diff -uraN /a1 /a2 > /a3.patch	
+						#raN这3个选项上面有介绍，不加这些选项，你的补丁文件是不完整的！必须加！
+						#这3个选项可以全加，不管给啥生成补丁，都可以写这3选项
+				打补丁的方法：
+				我们需要去看补丁文件，看看这个补丁是给哪个目录下的文件打补丁，我们就要进入到哪个目录下！
+				案例的意思是给/a1这个目录里面的差异文件打补丁，所以我们要进入到a1目录下才可以，执行打补丁的命令：
+					cd /a1
+					patch -p2 -i /a3.patch
+				为什么写-p2，此时我们需要查看一下补丁文件a3.patch里的关键行：
+					diff -uraN /a1/find	#补丁文件的意思是说我要给a1这个目录下find这个文件打补丁
+					diff -uraN /a1/tmp.txt
+				那么此时，我所在的目录是/a1 ，因为要给这目录里面的文件打补丁，所以在这里
+				我所在的目录/a1 和补丁文件中指明的源文件路径是存在重复的/a1/find  
+				我补丁文件要想给/a1下面的find文件打补丁，需要去掉“/目录”这个路径和“a1这个目录”这两个重复的路径，才能找到相应的文件，也就是差2个目录
+				所以我-p后面就应该写2！差几个目录就写几
+				也就是说当我新版的文件和旧版的文件不在同一个目录下时，生成的补丁程序，才需要考虑这个-p的问题！
+
+这里补充一个知识点：
+	想用scp命令给其它主机传目录，要加-r选项！
+	scp -r 							
+
+
+
+
+
+		
+	

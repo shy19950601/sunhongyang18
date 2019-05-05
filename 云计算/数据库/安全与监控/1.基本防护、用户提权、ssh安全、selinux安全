@@ -1,0 +1,491 @@
+安全与监控_day01
+一、Linux基本防护(系统安全，本地安全)
+1.1 用户帐号安全（相关文件 /etc/passwd  /etc/shadow  /etc/login.defs   /etc/skel/*） 
+
+	设置帐号有效期：
+		chage -l 用户 	#查看用户有效期
+	设置帐号的有效期：
+		chage -E 2019-03-31 用户名	#截至什么时间这个帐号有效
+		
+	查一下系统中有没有指定帐号：
+		grep 用户 /etc/passwd
+		id 用户
+	添加帐号：
+		useradd 用户
+
+	设置密码：
+		echo 密码 | passwd --stdin 用户
+	用户第一次登陆时，使其必须修改密码：（普通用户修改密码，密码必须符合复杂度）
+		chage -d 0 用户名
+	查看用户的密码状态：
+		passwd -S 用户 
+	查看日历：
+		cal
+		
+	锁定帐号，使其无法登陆系统：（不过root账户想切换这个锁定的用户是不受限制的）
+		passwd -S 用户名
+	给锁定的帐号解锁：
+		passwd -u 用户名
+	切换用户：（root账户下切换其它用户不用输入密码）
+		su 用户名	
+	当我们用 useradd 用户名 命令添加用户的时候，不指定任何设置，它的默认设置是什么样的？看/etc/login.defs配置文件,想要什么样的默认设置就可以改这个文件
+		内容如下：
+			PASS_MAX_DAYS   99999		#密码最长有效期
+			PASS_MIN_DAYS   0			#密码最短有效期，0是说永远不用修改，给它设置多少天，它就到了多少天必须要改密码
+			PASS_MIN_LEN    5			#密码最短长度
+			PASS_WARN_AGE   7			#密码过期前几天提示警告信息
+			UID_MIN         1000		#uid默认从1000开始
+			UID_MAX         60000		#uid默认上限是60000
+			SYS_UID_MIN     201
+			SYS_UID_MAX     999
+			GID_MIN         1000		#gid默认从1000开始
+			GID_MAX         60000		#gid默认最大60000
+			SYS_GID_MIN     201
+			SYS_GID_MAX     999
+			CREATE_HOME     yes		#添加用户时自动创建同名家目录
+			UMASK           077		#自动添加的家目录，默认权限是700，因为它的反掩码是077！
+			USERGROUPS_ENAB yes		#添加用户时自动添加同名组名
+			ENCRYPT_METHOD SHA512		#添加的用户，它的密码用SHA512加密算法加密显示！
+	在/etc/skel/* 下面有一堆隐藏文件，这些文件是用户的环境配置文件，当你useradd创建用户的时候，就自动把这些隐藏文件，拷贝到该用户的家目录里面
+		查看这些隐藏文件：ls -a /etc/skel/
+			.  ..  .bash_logout  .bash_profile  .bashrc  .mozilla
+		利用这个特性，我们就可以把某些文件拷贝这个目录下面，这样创建用户的时候，就可以把这些文件自动拷贝到新创建的用户家目录里了
+		
+	伪装登陆提示：	
+		即不显示内核版本(uname -r)	
+		这条命令之所以能查看到内核版本，其实是调用/etc/issue（本地连接找它获取信息）和/etc/issue.net（远程连接找它获取信息）这俩文件获得的
+		这俩文件里的内容其实是写的脚本命令！
+		你想获得操作系统的内核版本时，其实是走那俩文件/etc/issue、/etc/issue.net里的命令
+		所以可以把这俩文件里的内容改一下，这样就不会显示内核了
+	 	除此之外还可以把 /etc/redhat-release里的文件内容改一下，这样不就不会显示操作系统版本了吗
+
+	文件系统安全：
+		1.锁定文件或或目录：
+		比如/etc/hosts这个文件，它是做ip地址和主机名绑定的，/etc/resolv.conf这个文件，它是做指定DNS服务器的,万一别人给你指了假DNS，那你就废了
+		/etc/passwd文件、/etc/my.cnf等重要的文件！
+		可以锁定这些文件，给这些文件附加上特殊的属性，文件就锁定了 
+
+ 			当文件或者目录，被赋予下面的两个属性时，即使你是root用户，也无法做相应修改，除非你把下面这俩属性删掉
+				属性i：不可变 (vim  rm  mv )	
+				属性a：仅可追加 (>>) 而不能以编辑的方式对文件进行处理，只能以echo ... >> 文件
+			如何查看指定文件或者目录有没有上面的特殊属性的方法：
+	                lsattr  /etc/passwd	#查看/etc/passwd有没有特殊属性
+			如何给指定文件添加特殊属性：
+				chattr +a /etc/passwd	#+号是添加属性，-号是去掉特殊属性，=号是使其特殊属性成为什么
+				chattr -a /etc/passwd
+				chattr +i /root/test.txt
+
+		2.禁用非必要的系统服务：
+			红帽7：
+				systemctl disabled httpd 	#这就是禁用开机启动httpd服务
+				systemctl enable httpd 		#这是开机自启动
+			红帽6：
+				chkconfig httpd on		#这是开机自启动
+				chkconfig httpd off		#这是禁用开机自启动
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+二、用户切换与提权
+    	2.1 用户切换 su  [-] 用户	
+		#你不带-切换用户，就只是把用户切换了，而系统环境，还是你切换之前的用户的系统环境！
+		 root  ---- > tom		#不用密码
+		 tom   -----> root	#用密码
+		 tomm  -----> bob		#用密码
+
+		-c选项：
+		 tom]$ su - -c "touch  /root/a.txt"  root	
+			#这是不切换为root用户，只是以root的身份执行 "" 引号里面的指令，-c选项就是切换之后执行相应的命令
+
+		知识点补充：
+			查看当前系统用户的命令是whoami	
+			如果root用户想知道别人有没有利用提权功能做过什么操作，可以查看/var/log/secure 该日志文件,这个日志文件记录了所有su相关的操作！
+	
+    	2.2 用户提权 sudo ()
+		root用户为普通用户授权，使其普通用户可以执行什么指令！
+		配置sudo授权：
+			主配置文件是/etc/sudoers，修改其主配置文件，保存时，应该输入 wq! 强制保存才可以
+			vim /etc/sudoers
+			写入：
+			用户 主机名列表=命令列表		
+				#给哪个用户设置特殊权限，主机名列表就是当前服务器里的所有主机名！有几个写几个，命令列表就是赋予这个用户可以执行的特殊命令
+				#需要注意的是，命令列表必须要写完整的路径，比如ls这个命令，就必须要写ls命令程序的完整路径
+			root    ALL=(ALL)       ALL	
+				#默认这个文件里就有这一行，意思是说，root用户可以用root的身份执行这个主机里的所有命令！这行不要改
+			%用户组 主机列表=命令列表
+				#这是给这个组里的所有成员，授予某种特殊权限，这样就不用一条条的去给用户授权了
+			%wheel  ALL=(ALL)       NOPASSWD：ALL
+				#默认这个文件里就有这一行，意思是说，wheel组里的成员可以在这台主机里执行所有命令，组成员是利用root的身份执行命令的，%加组名就是指定要授权的组！
+				#且不用输入密码， NOPASSWD：把这个删除了就要输入密码了
+				#因为这一行的存在，所以wheel组里的成员有所有的权限，很危险，所以把这一行注释掉
+	普通用戶查看sudo授权,普通用户想知道自己所能提取的权限的方法：
+		sudo  -l
+	普通用戶執行sudo授权：
+		sudo 特权命令			
+			#比如我现在是tom用户，root给我这个tom用户授权了某种命令，我提权，我提权的时候需要输入tom的密码
+			#比如我tom账户有这台服务器all权限，我执行某些普通用户不能执行的命令时就应该这样操作：
+				sudoo /usr/bin/rpm -q httpd	//以root赋予的权限执行原本不能执行的命令，但是要求命令必须是绝对路径，可以用which查命令的绝对路径		
+		sudo -u 目标用户 特权命令	
+			#比如我现在是tom用户，root给bob这个用户授权了某种命令，我利用bob的身份提权，-u后面指定的就是bob，我提权需要输入bob的密码
+
+		提權例子：
+		1 、 在系統裏添加3個普通用 dachui  tiechui  niuben lisi並設置密碼123456
+		2 、 提權
+			vim  /etc/sudoers
+			可以在root那一行下面写入：
+			dachui localhost,mysql50=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * httpd		   
+				//让dachui可以维护httpd服务，可以修改配置文件，可以重启停止服务等，逗号可以分隔多条命令！有几个主机名写几个主机名！
+			tiechui  localhost,mysql50=/usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+				//让tiechui可以维护mysqld服务，也就是vim配置文件，和重启服务等，*表示通配所有
+			niuben   localhost,mysql50=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * h
+				ttpd , /usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld
+				//这是让niuben用户可以维护httpd和mysqld服务
+			lisi loacalhost,mysql50=/sbin/*,!/sbin/ifconfig eth0
+				//lisi用户可以提权使用/sbin/下面的所有命令，但是不能使用/sbin/ifconfig eth0这条命令！感叹号是取反的意思
+		
+			:wq! 强制保存退出即可
+
+	
+	2.3 sudo别名设置：
+			我们可以把多个命令放在一起，然后给它们起个别名，这样就不用一条条的写命令列表了！当然用户名和主机名也可以起别名！
+			这样做就是为了提高可重用性，易读性，简化配置，使记录更有条理
+			设置别名的操作，也是写在/etc/sudoers主配置文件里的
+			需要注意的是，如果你想调用别名，那么你给用户设置授权的时候，就必须写在别名下面！否则无法调用别名！
+
+			User_Alias  OPERATORS=jerry,tom,tsengyia		
+				//User_Alias是给用户定义别名，别名=用户名1，用户名2.... ，注意别名必须是全部大写
+			Host_Alias  MAILSERVERS=mail,smtp,pop,svr7
+				//Host_Alias给主机定义别名
+			Cmnd_Alias  SOFTMGR=/bin/rpm,/usr/bin/yum
+   				//Cmnd_Alias这是给命令定义别名
+			OPERATORS   MAILSERVERS=SOFTMGR
+				//这不就是用别名做授权吗，给OPERATORS别名里的用户授权，主机列表是别名MAILSERVERS，命令列表是别名SOFTMGR
+			有很多别名，是系统已经定义好的，你可以把注释去掉直接用，比如网络配置的别名 Cmnd_Alias NETWORKING 软件配置的别名mnd_Alias SOFTWARE 等等
+
+		设置别名实例：
+		vim /etc/sudoers
+			Cmnd_Alias      MYCMND=/usr/bin/vim /etc/httpd/conf/httpd.conf,/usr/bin/systemctl * httpd , /usr/bin/vim /etc/my.cnf 
+			Cmnd_Alias      SOFTMGM=/bin/yum , /bin/rpm
+			Host_Alias      MYPC=localhost,mysql50
+
+			dachui  MYPC=/usr/bin/vim /etc/httpd/conf/httpd.conf , /usr/bin/systemctl * httpd , SOFTMGM
+			tiechui  MYPC=/usr/bin/vim /etc/my.cnf , /usr/bin/systemctl * mysqld , SOFTMGM
+			niuben      MYPC=MYCMND , SOFTMGM , /sbin/* , !/sbin/ifconfig  eth0
+
+	2.4 启用日志：
+		所有与sudo相关的命令都会被记录在/var/log/sudo文件里，但是默认这个日志文件没有启用，我们需要把它启动，启动方法是改sudo的主配置文件
+		vim  /etc/sudoers 
+		在最后一行写入：
+		   Defaults  logfile="/var/log/sudo"
+			//以后有sudo相关的操作的时候，就会记录在这个指定文件里，默认这个文件不存在，是别人执行过sudo的操作之后，它才会生成这个文件
+		:wq!
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+三、SSH访问控制
+	/etc/ssh/sshd_config	#这个是ssh的主配置文件
+	systemctl restart sshd	#重启ssh的服务命令
+	ssh远程存在着安全隐患，比如别人用第三方软件来记录你键盘的输入记录，或者反复的猜你的密码，都容易破解服务器的密码
+	为了防止ssh存在的密码泄露隐患，而做出的常见防护措施：
+		用户限制、黑白名单、使用公私钥、防火墙
+
+	3.1  sshd基本安全配置：
+		我们应该修改ssh的默认端口号，因为ssh的默认端口号是22，大家都知道黑客也知道，这样就很危险，改了端口号，不指定端口号就无法连接！
+			]# vim /etc/ssh/sshd_config
+			 	port  2222	#改这一行的参数即可修改端口号
+				Protocol 2	#启用ssh V2版本协议，这个默认就可以不用修改
+				ListenAddress 192.168.4.174	#我服务器上的哪块网卡提供ssh服务，默认是所有网卡都提供ssh服务的，默认是0.0.0.0
+				PermitRootLogin no 		#当别人远程连接我这台服务器的时候，不允许它们以root身份登陆我这台服务器，默认没有这条规则
+				UseDNS no 	#不解析客户机地址，也就是说当你ssh别的主机的时候，你输入的不是对方的IP地址吗，这个时候就会试图把这个IP地址解析成域名
+				LoginGraceTime 1m			#登陆限时，你连续3次失败之后，不让连了，需要再等1分钟之后才能重新连接！和下面是组合使用的
+				MaxAuthTries 3			#每连接最多认证次数，也就是别人远程连接这台服务器时，密码输入3次都失败，那就不让连了
+			:wq
+			]# systemctl  restart  sshd
+
+		客戶端端連接
+		 	]# ssh  -p 2222  root@192.168.4.50
+
+	3.2  sshd黑/白名单配置
+		3.2.1 白名单配置
+		      ]# vim /etc/ssh/sshd_config
+			AllowUsers  root@192.168.4.254  niuben
+				#如果我设置了这一条，就是说只允许192.168.4.254这一台主机用root用户身份ssh我这台服务器！
+				#允许所有主机以niuben用户身份登陆我这台服务器！这就是加@和不加@的区别
+				#当我开启了白名单功能的时候，就只有白名单里的人，才能以我指定的身份ssh连接我这台服务器
+				#所以，黑白名单功能不可以一起使用！
+			AllowGroups group1 group2
+				#允许其它主机使用group1、group2组里的用户身份ssh登陆我这台服务器，后面也可以跟@指定某台主机，但是不常用
+			:wq
+
+		     ]# systemctl  restart  sshd	#重启下服务
+
+		3.2.2 黑名单配置
+		    ]# vim /etc/ssh/sshd_config
+			#AllowUsers  root@192.168.4.254  niuben	#注释掉白名单的内容
+			DenyUsers   root  niuben 	
+				#这就是说所有其它主机，不可以用root和niuben用户ssh登陆我这台服务器
+				#但是你可以用我这台服务器里的其它用户，ssh登陆我这台服务器
+				#也可以加@指定某台主机IP
+			DenyGroups 	group1 group2 
+				#拒绝其它主机使用group1、group2组里的用户身份ssh登陆我这台服务器，后面也可以跟@指定某台主机，但是不常用
+			:wq
+		     ]# systemctl  restart  sshd	
+
+	3.3  sshd登陸验证方式控制
+		生产环境中使用黑白名单都不安全，而是用公私密钥对的方式来ssh！使用公私密钥的方式的话，前面的黑白名单配置就可以注释了
+		3.3.1 口令认证登陆(默认配置)	
+			65 PasswordAuthentication yes
+				#也就是/etc/ssh/sshd_config配置文件里的这一行，它默认就是存在的，所以我们ssh远程别的服务器时，是要输入密码的
+				#所以你要使用密钥对的话，就把这一行改成no
+		3.3.2 SSH密钥对验证
+			43 #PubkeyAuthentication yes 	
+				#默认是注释的，所以要把这个注释去掉，yes是启用密钥对，no就是不允许使用密钥对登陆
+			47 AuthorizedKeysFile      .ssh/authorized_keys
+				#指定存放公钥文件的位置即名称，是在用户家目录里的/root/.ssh/authorized_keys
+
+		例子：配置50主机仅支持ssh密钥对认证登陆
+		    办公室电脑254也就是客户端创建密钥对，并把公钥文件传给50这台服务器！
+	        	    ]# ssh-keygen	//默认它会将私钥文件存放在/root/.ssh/id_rsa 
+				会出现以下信息：
+				Enter file in which to save the key (/root/.ssh/id_rsa): 	//密钥是否存放在默认路径下
+				/root/.ssh/id_rsa already exists.
+				Overwrite (y/n)? y							//已存在，是否替换
+				Enter passphrase (empty for no passphrase):  			//是否设置保护私钥的密码，输入密码，以后就要输入密码才能调用私钥
+				Enter same passphrase again: 						//再输入一遍保护密码
+				Your identification has been saved in /root/.ssh/id_rsa.
+				Your public key has been saved in /root/.ssh/id_rsa.pub.
+				The key fingerprint is:							//回车即可
+				SHA256:y/Ckgu7TfpTQiuYb+zyXG0j+A5nBuaLk+V7CyHWHPJE root@localhost.localdomain
+				The key's randomart image is:						//回车即可
+			    ]# ssh-copy-id  root@192.168.4.50	//将公钥文件传输给50服务器，在50上面这个公钥文件叫authorized_keys，因为是50ssh配置文件写的！
+			    ]# ls /root/.ssh	
+				这是公钥文件 id_rsa.pub   
+                        	这是私钥文件 id_rsa
+				know_hosts 这个文件是记录自己曾经连接过的主机
+		   50主机禁止口令认证登陆 并重启ssh服务
+		       ]# vim /etc/ssh/sshd_config
+			PasswordAuthentication no		#你得传完公钥之后，才能关口令认证，不然你咋传
+		   	:wq
+			]# systemctl restart sshd
+		   在254 主机连接 50主机
+			 ssh  root@192.168.4.50   
+				#允许且无需输入root密码，这是以root的身份传的密钥对，传到的是root家目录里的.ssh，所以只有root可以免密码登陆
+				#别的用户你想用密钥对免密登陆，需要再以它们别人的身份给它们传公钥才行！
+			 ssh  niuben@192.168.4.50 不允许连接
+
+		   在家里的电脑上 和出差的电脑上都可以ssh 50主机
+		  	把254 主机的私钥文件id_rsa拷贝给家里的电脑，也就是放在其/root/.ssh下面，家里的电脑没有这个文件夹，就手动建出来
+		  	把254 主机的私钥文件拷贝给出差使用的笔记本电脑 
+
+  		这里说一下，如果254这台主机不能传公钥给50，那就把50的/root/.ssh目录删掉！然后254的也删掉重新做就可以了！当然你重做的前提是别把口令验证关了，不然你没法远程控制50了
+
+——————————————————————————————————————————————————————————————————————————————————————————
+
+四、SELinux安全防护
+	4.1 SELinux 介绍 
+		中文名称叫linux扩展安全，是一套强化linux安全的扩展模块，内置在linux内核里，linux操作系统提供定制的selinux策略和管理工具
+		rpm  -qa  | grep  -i selinux	#可以查看selinux相关的软件包
+
+	4.2 查看当前系统SElinux的状态信息 
+		sestatus 	#查看selinux状态信息，这些信息都是从/etc/sysconfig/selinux配置文件里调出来的
+	SELinux status:                 enabled		#是否启用了selinux
+	SELinuxfs mount:                /sys/fs/selinux	#相关文件挂载到哪里
+	SELinux root directory:         /etc/selinux	#selinux的工作目录在哪
+	Loaded policy name:             targeted		#加载策略名称
+	Current mode:                   permissive		#当前selinux的保护模式是什么，一共3种（disabled禁用\permisive宽松\enforcing强制）
+	Mode from config file:          permissive		#配置文件模式
+	Policy MLS status:              enabled
+	Policy deny_unknown status:     allowed
+	Max kernel policy version:      28			#最大内核策略版本
+
+	4.3 SELinux主配置文件
+		]# vim /etc/sysconfig/selinux
+			SELINUX=permissive 	
+				#修改当前selinux的保护模式（disabled禁用\permisive宽松\enforcing强制）
+				#这三种模式决定了什么样的操作，受selinux控制的程度！
+			SELINUXTYPE=targeted	
+				#这是selinux的类型，一共三种类型（minimum、 targeted、mls），这3种类型决定了，做selinux保护判断的范围！
+				#targeted是保护这台服务器里的常用服务比如网站、数据库、邮件、ftp
+				#mls是全都保护！不止是保护常用服务，你每做一个操作，都会需要cpu去判断你这个操作是否满足selinux保护机制，这样造成了很大的负荷
+				#minimum就是介于两者之间的防护机制，不是每一个操作都去判断是否满足保护机制！
+			
+	4.4  设为强制模式
+		]# setenforce  1		#1就是强制模式，0就是宽松模式，如果想禁用selinux就必须要改配置文件，设置宽松和强制都是临时设置的，想永久设置要改配置文件
+	    	]# getenforce 		#这是查看selinux当前的状态
+
+这里补充一个知识点：
+		服务器一共两道门，你外部主机想访问我这台服务器，必须要通过我服务器设置的firewall防火墙保护机制，
+		你通过了防火墙之后，你用我服务器里的一个用户访问我的时候，你所使用的这个用户，就要受我这台服务器的selinux限制
+
+    	4.5 SELinux策略设置
+         	4.5.1安全上下文
+			]# ps  aux -Z  | grep  -i  httpd		#这是查看进程的安全上下文
+			`	system_u:system_r:httpd_t:s0		#这一串就是安全上下文，一共4列
+
+			]# ls -ldZ /root					#这是查看目录的安全上下文
+				system_u:object_r:admin_home_t:s0	#这就是目录的安全上下文
+
+			]# ls -lZ /etc/passwd				#这是查看文件的安全上下文
+				system_u:object_r:passwd_file_t:s0	#文件的安全上下文
+
+		安全上下文的组成：
+			用户 : 角色 : 访问类型 : 选项
+			system_u:system_r:httpd_t:s0
+
+			system_u:object_r:admin_home_t:s0
+
+			system_u:object_r:httpd_config_t:s0
+
+		一般操作规律:
+		       touch、mkdir新创建的文件或目录会自动继续父目录的安全上下文类型
+		       cp复制的文件会自动继承目标目录的安全上下文类型
+		       mv移动的文件会保留原有的上下文属性不变
+		
+		安全上下文的应用：
+			比如/var/www/html 这个目录就有个安全上下文			
+			system_u:object_r:httpd_sys_content_t:s0	
+				#只有拥有这个安全上下文，网页才能被访问！也就是说就算你配置文件指定了网页存放目录，没有安全上下文也无法访问网页
+				#当然起作用的是访问类型！和其它3列没有关系！
+		修改安全上下文
+			]# chcon -t 访问类型  文件
+			]# chcon -R  -t 访问类型 目录
+			例如：
+			]# chcon  -t httpd_sys_content_t a2.html
+			]# chcon -R  -t httpd_sys_content_t /var/www/html
+
+		恢复为所在位置的默认上下文属性
+			]# restorecon /var/www/html/a2.html	#你这个a2.html文件虽然是移动过来的，父目录是html，你恢复就完事了，a2.html就自动和html同安全上下文了
+			]# restorecon -R /var/www/html		#这是给整个html目录恢复默认所在位置的安全上下文，也就是www的安全上下文，并且它的所有子目录子文件也会继承
+
+		4.5.2布尔值
+			所谓的布尔值就是功能开关，像是只有0和1、开和关、正和反、这样的组合值，都叫做布尔类型！
+			查看布尔值：
+				getsebool -a	//查看所有布尔值，并列出
+				就比如说，我的mysql服务是开着的，但是布尔值是off，意思就是不允许访问！
+				getsebool -a | grep -i httpd	//查看httpd服务相关的布尔值
+			设置布尔值：
+				setsebool -P 服务选项 on或者off
+				例如：setsebool -P virt_use_usb off	#让virt_use_usb这个服务不允许被访问，-P的意思是让此设置永久有效
+		
+		例子：关于ftp中的共享目录开启上传功能
+		如何使服务器上的ftp服务，可以让其它用户上传文件？
+		修改配置文件：
+		vim /etc/vsftpd/vsftpd.conf
+		29 #anon_upload_enable=YES 	//修改其29行，打开这一行的注释即可，这一行就是允许客户上传文件的开关
+		当然我们还要让/var/ftp这个目录让其它用户有读写权限才可以，因为/var/ftp是默认访问路径，你光有配置文件vsftpd.conf的允许上传是不可以的
+			
+		对设置布尔值的例子：
+		让50服务器ftp下的share目录，允许客户端访问与上传
+			1.修改其ftp服务的配置文件，使其允许客户上传文件，然后重启服务
+			2.开放/var/ftp/share 目录的其他人读写权限
+			3.用另一台服务器51，访问50服务器的ftp，要求51上也要有ftp服务，否则无法连接50，连接50的时候，默认所要使用的用户名是ftp，没有密码
+			4.51想退出50的ftp服务目录，输入命令bye即可
+	具体显示如下：
+			[root@localhost ~]# ftp 192.168.4.50
+			Connected to 192.168.4.1 (192.168.4.1).
+			220 (vsFTPd 3.0.2)
+			Name (192.168.4.1:root): ftp
+			331 Please specify the password.
+			Password:						//没密码，直接回车
+			230 Login successful.
+			Remote system type is UNIX.
+			Using binary mode to transfer files.
+			ftp> 							//这是ftp的命令行，正常的linux命令操作即可
+			ftp> ls		//查看ftp里的目录列表
+			ftp> cd share	//进入到share共享目录里
+			ftp> ls		//看看里面的共享文件
+			ftp> get 文件名	//下载share目录里的文件,你在什么目录里连接的ftp，那么文件就下载到哪个目录里
+			ftp> lcd /etc		//切换到51本机的/etc目录下，准备上传51/etc里的文件到50中的ftp共享目录里,但是不会退出ftp>这个环境
+			ftp> put passwd		//就是把/etc/passwd这个文件上传到50的ftp中的share共享目录里。但是此时其实是上传不了的，因为selinux的布尔值
+			要想让ftp允许客户端上传文件，还需要开启两项布尔值：
+			 	setsebool -P allow_ftpd_anon_write on
+				setsebool -P allow_ftpd_full_access on
+			ftp> put passwd	//这时候再上传就可以了
+			ftp> bye		//退出50服务器的ftp目录
+						
+		4.5.3查看selinux报错日志：
+			有了日志，就可以知道，每个布尔值选项，都是针对服务里什么功能的开关！
+			什么软件提供selinux报错日志功能：
+				rpm -qa | grep -i setroubleshoot	//这个软件就是提供selinux报错日志的
+			日志文件在哪：
+				/var/log/messages		//这个日志里面，不仅有报错信息，还有许多正常的selinux日常信息，所以，我们要过滤错误日志
+				grep setroubleshoot /var/log/messages | tail -1	
+								//这是最新的selinux错误信息 
+				显示如下：错误信息一共3部分，以：分隔
+Apr  1 10:52:12 localhost setroubleshoot: 		//第一部分是错误信息产生的时间，主机名，以及什么程序提供的错误信息
+SELinux is preventing vsftpd from lock access on the file /pub/b/repodata/repomd.xml. For complete SELinux messages run: 
+	//这就是具体的报错，也不能叫报错，比如说我刚才想给ftp上传文件的时候，不是因为selinux布尔值的缘故，失败了吗，这样的信息就是这个报错信息
+sealert -l 6e63475d-6c04-4773-9747-153bbcc86ea9
+	//你去运行这条命令，就可以看到详细的报错信息！及对应的解决办法，这样不就知道该开服务中的哪个布尔值选项了吗
+
+运行了sealert -l 6e63475d-6c04-4773-9747-153bbcc86ea9这条命令之后，显示的信息如下：
+
+*****  Plugin restorecon (92.2 confidence) suggests   ************************
+
+If 想要修复标记。 
+/pub/b/repodata/repomd.xml 的默认标记应为 default_t。
+Then 可以运行 restorecon。
+Do										//你想解决这个问题，就执行下面的命令！每个do下面提供了解决方法！
+# /sbin/restorecon -v /pub/b/repodata/repomd.xml		
+
+*****  Plugin catchall_boolean (7.83 confidence) suggests   ******************
+
+If 要 allow ftpd to full access
+Then 必须启用 'ftpd_full_access' 布尔值告知 SELinux 此情况。
+可以阅读 'None' 手册页面来了解详情。
+Do										//你想解决这个问题，就执行下面的命令！每个do下面提供了解决方法！
+setsebool -P ftpd_full_access 1
+
+*****  Plugin catchall (1.41 confidence) suggests   **************************
+
+If 确定应默认允许 vsftpd lock 访问 repomd.xml file。
+Then 应该将这个情况作为 bug 报告。
+可以生成本地策略模块以允许此访问。
+Do										//你想解决这个问题，就执行下面的命令！每个do下面提供了解决方法！
+allow this access for now by executing:
+# ausearch -c 'vsftpd' --raw | audit2allow -M my-vsftpd
+# semodule -i my-vsftpd.pp
+
+
+我们来做一个例子，通过实例来查看这个selinux报错日志的解决方案：
+	1.我们给httpd服务修改端口号，改配置文件/etc/httpd/conf/httpd.conf，改它的监听端口改成8060，然后保存退出重启服务，但是因为selinux的缘故，我们重启服务时会失败
+
+	2.然后我们去看下selinux报错信息中提供的解决方案：
+
+*****  Plugin bind_ports (92.2 confidence) suggests   ************************
+
+If you want to allow /usr/sbin/httpd to bind to network port 8060
+Then you need to modify the port type.
+Do
+# semanage port -a -t PORT_TYPE -p tcp 8060	
+		//这条命令就是说，让selinux开放8060端口，否则selinux认为这个端口不安全，执行它即可（其中端口类型PORT_TYPE应该替换成下面的http_port_t）
+其中 PORT_TYPE 是以下之一：http_cache_port_t, http_port_t, jboss_management_port_t, jboss_messaging_port_t, ntop_port_t, puppet_port_t。
+
+*****  Plugin catchall_boolean (7.83 confidence) suggests   ******************
+
+If 要 allow nis to enabled
+Then 必须启用 'nis_enabled' 布尔值告知 SELinux 此情况。
+可以阅读 'None' 手册页面来了解详情。
+Do
+setsebool -P nis_enabled 1		//然后再去告诉selinux开启这个布尔值
+
+*****  Plugin catchall (1.41 confidence) suggests   **************************
+
+If 确定应默认允许 httpd name_bind 访问 port 8060 tcp_socket。
+Then 应该将这个情况作为 bug 报告。
+可以生成本地策略模块以允许此访问。
+Do
+allow this access for now by executing:			//这个是生成报告信息的，没啥用
+# ausearch -c 'httpd' --raw | audit2allow -M my-httpd
+# semodule -i my-httpd.pp
+
+	通过上面的报错信息，我们可知：
+	执行下面两条命令即可解决由selinux控制而造成的httpd无法重启服务的方法！
+	semanage port -a -t  http_port_t -p tcp 8060
+	setsebool -P nis_enabled 1
+
+
+
+
+
+
+

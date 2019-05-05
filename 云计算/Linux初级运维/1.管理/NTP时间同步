@@ -1,5 +1,25 @@
 NTP时间同步：因为集群服务器时间必须一致，该服务用于解决该问题
 	NTP服务器为客户机提供标准时间,客户端与NTP服务器保持沟通
+
+NTP采用的是分层设计，最多只能到15层，第一层是国家的，第二层是你做的服务器，第二层可能是你公司的其他服务器，再可能是很多很多和上一层再同步，总共物理架构不要超过15层就行
+先装包 yum -y install chrony
+rpm -qc chrony                        //查看配置文件列表
+cat /etc/chrony.conf   //查看配置文件
+ 
+server ntp1.aliyun.com.iburst   //server用户客户端指向上层NTP服务器，这个上层服务器是阿里云的服务器，前提是你能连公网
+allow 192.168.4.0/24                        //允许那个IP或网段访问NTP
+#deny  192.168.4.1                        //拒绝那个IP或网络访问NTP
+local stratum 10                            //设置NTP服务器的层数量 15以内都可以写几都行
+
+验证命令：chronyc sources -v
+
+客户端要做的也是这样的步骤！指定4.5为上层服务，然后重启服务
+
+
+4)然后启动NTP服务
+[root@proxy ~]# systemctl  restart  chronyd
+[root@proxy ~]# systemctl  enable  chronyd
+
 客户端服务部署：
 	1.客户服务器安装chrony软件
 		wget chrony的url（如果yum仓库有该软件包，这步省略）
@@ -13,5 +33,6 @@ NTP时间同步：因为集群服务器时间必须一致，该服务用于解�
 	4.验证时间同步
 		修改本机时间date -s '时间'
 		5分钟后，再查看，会发现时间自动变正确了
+
 
 

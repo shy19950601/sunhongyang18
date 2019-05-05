@@ -16,9 +16,50 @@
 	14.redis非关系型数据库		6379
 	15.php-fpm php解释器		9000
 	16.redis中的哨兵服务		26379	
+	17.mongodb非关系型数据库		27017	
+	18.php-fpm				9000
 vsftpd(端口号：21)服务
 ftp服务的部署：
 	1.安装vsftpd软件
 		yum -y install vsftpd
 	2./var/ftp/自己创建用于共享的文档 并且要给ftp目录设置o+t权限
 	3.启动服务即可
+
+如何使服务器上的ftp服务，可以让其它用户上传文件？
+		修改配置文件：
+		vim /etc/vsftpd/vsftpd.conf
+		29 #anon_upload_enable=YES 	//修改其29行，打开这一行的注释即可，这一行就是允许客户上传文件的开关
+		当然我们还要让/var/ftp这个目录让其它用户有读写权限才可以，因为/var/ftp是默认访问路径，你光有配置文件vsftpd.conf的允许上传是不可以的
+		如果你想让用户访问指定的ftp下的目录的话，就对指定目录开放其它用户读写权限即可
+		
+		例子：
+		让50服务器ftp下的share目录，允许客户端访问与上传
+			1.修改其ftp服务的配置文件，使其允许客户上传文件，然后重启服务
+			2.开放/var/ftp/share 目录的其他人读写权限
+			3.用另一台服务器51，访问50服务器的ftp，要求51上也要有ftp服务，否则无法连接50，连接50的时候，默认所要使用的用户名是ftp，没有密码
+			4.下载的命令是get，比如下载51里的/var/ftp/share里的
+			4.51想退出50的ftp服务目录，输入命令bye即可
+
+		具体显示如下：
+			[root@localhost ~]# ftp 192.168.4.1
+			Connected to 192.168.4.1 (192.168.4.1).
+			220 (vsFTPd 3.0.2)
+			Name (192.168.4.1:root): ftp
+			331 Please specify the password.
+			Password:						//没密码，直接回车
+			230 Login successful.
+			Remote system type is UNIX.
+			Using binary mode to transfer files.
+			ftp> 							//这是ftp的命令行，正常的linux命令操作即可
+			ftp> ls		//查看ftp里的目录列表
+			ftp> cd share	//进入到share共享目录里
+			ftp> ls		//看看里面的共享文件
+			ftp> get 文件名	//下载share目录里的文件,你在什么目录里连接的ftp，那么文件就下载到哪个目录里
+			ftp> lcd /etc		//切换到51本机的/etc目录下，准备上传51/etc里的文件到50中的ftp共享目录里,但是不会退出ftp>这个环境
+			ftp> put passwd		//就是把/etc/passwd这个文件上传到50的ftp中的share共享目录里。但是此时其实是上传不了的，因为selinux的布尔值
+			要想让ftp允许客户端上传文件，还需要开启两项布尔值，或者关闭selinux：
+			 	setsebool -P allow_ftpd_anon_write on
+				setsebool -P allow_ftpd_full_access on	
+
+
+

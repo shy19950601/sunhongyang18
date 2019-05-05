@@ -1,0 +1,130 @@
+红帽7的防火墙是firewalld，它最终调用的还是iptables
+红帽6的防火墙是iptables
+关于服务器的网络问题：
+	我一台服务器50上有4个端口，每个端口对应一张网卡
+	当我另一台服务器51，连接上50的其中一个网卡口时，不仅可以ping通所连的网卡，还能ping通其它三个网卡（其它三网卡不同ip），
+	原因就是50的防火墙开启了nat转发功能！如果防火墙没有开启nat转发功能，那么是无法ping通其它三张网卡的，默认nat转发功能就是开的
+	
+iptables防火墙：
+	一、什么是防火墙：
+		一道保护性的安全屏障，保护内网，隔离外网
+		属于软件防火墙
+		它是包（ip包）过滤防火墙，也就是所有到达本机的数据包，都要经过iptables的检查
+		ip包在iso第三层
+	二、防火墙类型：
+		主机型防火墙：
+			比如我服务器开启防火墙，想保护我自己这整台服务器，那防火墙类型就是主机型防火墙
+		网络型防火墙：	
+			比如我一台服务器，连接两个网络，一个端口连的是外网，一个端口连的是内网，我公司里的所有设备想访问外网都要经过我这台防火墙服务器
+			这台防火墙服务器，类似于一台路由器！但是还有防火墙的功能！它保护的是整个网络不仅仅是自己！
+	二、由于本机是红帽7，所以我要把firewalld防火墙停掉，安装并启动iptables防火墙
+		[root@proxy ~]# systemctl stop firewalld.service 
+		[root@proxy ~]# systemctl disable firewalld.service
+		[root@proxy ~]# yum -y install iptables-services
+		[root@proxy ~]# systemctl start iptables.service	
+	三、iptables的组成：
+		4张用于功能分类的表：
+			状态跟踪表raw
+				对到达服务器的数据包做状态跟踪
+				比如刚建立连接的数据包，已经建立连接的数据包，断开连接的数据包，做什么样的操作，就要用这个表
+				这个表里只能获取两种方向的数据包：PREROUTING OUTPUT
+			包标记表mangle
+				用于给到达防火墙服务器的ip包打标记
+				比如同样都是来自ssh的数据包，为了能区分它们，给这些ssh数据包打个标记！
+				这个表里可以获取5种方向的数据包！
+			地址转换表nat
+				只要我想去访问别人，都要生成一个ip数据包，这里面指定了我的源ip地址，和我要访问的目标ip地址
+				可以通过这张表修改数据包的源目标地址，和目标IP地址
+				当然这是我去访问别人才可以，别人发过来的数据包，我没办法操作它们！
+				这个表里只能获取这3种方向的数据包：OUTPUT PREROUTING POSTROUTING
+			过滤表filter
+				用于过滤数据包的表，什么样的数据可以通过什么样的不可以通过防火墙，想实现这样的功能，就要使用这张表
+				在这个表里写过滤规则
+				这个表里只能获取这3种方向的数据包：INPUT OUTPUT FOWARD
+		5条链
+			链是指数据传输的方向，不同的表，可以匹配不同的链！链里面有多条规则！
+			INPUT:
+				匹配进入防火墙本机的数据包
+			OUTPUT:
+				匹配从防火墙本机出去的数据包
+			FOWARD:
+				匹配经过防火墙服务器的数据包
+			PREROUTING:
+				路由前，也就是数据包到达防火墙服务器的时候，还没有选择目标ip地址的数据包
+			POSTROUTING:
+				路由后，数据包到达防火墙服务器时，它已经确定了目标ip地址的数据包
+
+		5条链里规则的匹配顺序：
+			匹配即停止
+				比如说匹配到第一条规则了，那么就不看后面的规则了
+				若没有任何匹配，则按链的默认规则策略处理	
+				但是如果说，我设置了一条规则是，把数据包里的数据记录到log日志文件里，它匹配完之后，不停止！继续去匹配下一条规则，匹配上其它规则才会停止！
+
+	四、使用命令管理iptables：
+		管理程序存在/sbin/iptables
+		命令：
+		iptables -t 表名 选项 链名 匹配条件 -j 目标操作
+			#-t指定对哪张表做操作，不指定表，默认就是filter表
+			#选项就是对表的操作！你是要查看表里的内容，还是要删除表里的内容
+			#表里不止一条链，所以要指定链，如果不指定哪条链，默认是对应表的所有链
+			#通过条件判断，筛选出符合条件的数据包！
+			#匹配到指定条件的数据包之后，想做什么处理就是-j后面的目标操作！
+			#如果没有指定匹配条件，则使用防火墙的默认匹配条件
+			#选项/链名/目标操作 用大写字母，其余都小写
+		常用选项：
+			-A 在链的末尾追加一条规则
+			-I 在链的开头（）
+			-L 列出链与规则
+			-n（小写）将地址、端口、协议等以数字显示
+			-D
+			-F
+			-P
+			--line-numbers 
+		匹配条件：
+			
+		目标操作包括哪些：
+			ACCEPT:允许通过/放行
+			DROP：直接丢弃数据包，不给任何回应
+			REJECT：拒绝通过，并给出提示
+			LOG：记录进日志，然后传给下一条规则
+
+	示例：
+		命令：iptables -L		#默认列出filter表里的所有链和所有规则
+		显示如下：3条链以及对应的规则
+			Chain INPUT (policy ACCEPT)	#放行进入防火墙本机的数据包
+			target(操作)       prot opt(端口与协议) 	     source(源地址)        destination(目标地址)         
+			ACCEPT     		all  --  anywhere             anywhere             state RELATED,ESTABLISHED
+			ACCEPT     		icmp --  anywhere             anywhere            
+			ACCEPT     		all  --  anywhere             anywhere            
+			ACCEPT     		tcp  --  anywhere             anywhere             state NEW tcp dpt:ssh
+			REJECT     		all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+			Chain FORWARD (policy ACCEPT)	#放行经过防火墙本机的数据包
+			target     prot opt source               destination         
+			REJECT     all  --  anywhere             anywhere             reject-with icmp-host-prohibited
+
+			Chain OUTPUT (policy ACCEPT)	#放行从防火墙本机出去的数据包
+			target     prot opt source               destination 
+
+		命令：iptables -nL	#将地址、端口、协议等以数字显示
+		显示如下：
+			Chain INPUT (policy ACCEPT)
+			target     prot opt source               destination         
+			ACCEPT     all  --  0.0.0.0/0            0.0.0.0/0            state RELATED,ESTABLISHED
+			ACCEPT     icmp --  0.0.0.0/0            0.0.0.0/0           
+			ACCEPT     all  --  0.0.0.0/0            0.0.0.0/0           
+			ACCEPT     tcp  --  0.0.0.0/0            0.0.0.0/0            state NEW tcp dpt:22
+			REJECT     all  --  0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited
+
+			Chain FORWARD (policy ACCEPT)
+			target     prot opt source               destination         
+			REJECT     all  --  0.0.0.0/0            0.0.0.0/0            reject-with icmp-host-prohibited
+
+			Chain OUTPUT (policy ACCEPT)
+			target     prot opt source               destination         
+	
+
+
+
+
+
