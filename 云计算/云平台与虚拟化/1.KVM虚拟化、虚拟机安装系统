@@ -19,7 +19,7 @@ IT三大方向：AI人工智能 DB大数据 Cloud云计算   python语言做AI�
 相关的虚拟化产品：
 	vmvare是闭源的，是装在windows上的,它有个管理端叫vcenter
 	KVM是开源的，KVM和Xen都是主推部分虚拟化功能的，性能好，根据cpu来决定是完全虚拟化还是半虚拟化，KVM的代码量远比Xen少，并且集成在内核了
-	Xen
+	
 KVM简介：
 	KVM是linux内核里的一个模块，需要cpu支持
 	我们可以利用命令cat /proc/cpuinfo 查看一下cpu信息
@@ -297,11 +297,13 @@ Virsh命令管理虚拟机：
 		DEVICE="eth0"
 		ONBOOT="yes"
 		BOOTPROTO=static			#如果你要配置网卡聚合，这里就要写none
-		TYPE=Ethernet
+		TYPE=ethernet
 		IPADDR="192.168.4.100"		#网卡ip
 		NETMASK="255.255.255.0"		#子网掩码
-		GATWAY="192.168.1.254"		#这是指定路由，也就是默认网关！但是一台虚拟机只允许一张网卡指定网关！所以当你有多张网卡时，一定要把网关删除！
-	改完之后，重启一下这个网卡服务systemctl restart network
+		GATEWAY="192.168.1.254"		#这是指定路由，也就是默认网关！但是一台虚拟机只允许一张网卡指定网关！所以当你有多张网卡时，一定要把网关删除！
+	改完之后，重启一下这个网卡服务
+		systemctl restart network
+		service network restart (6版本)
 	
 	在生产环境中，很有可能碰到一种加载空路由的情况，用 ip route show 命令查看一下，加载的路由
 	干掉加载的空路由的方式：vim /etc/sysconfig/network

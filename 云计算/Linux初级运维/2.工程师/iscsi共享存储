@@ -43,7 +43,7 @@ iscsi共享存储（网络磁盘）：服务器提供磁盘空间，客户端连
 		systemctl restart iscsid  提示：如果出现warning字样就输入命令：systemctl daemon-reload
 		systemctl enable iscsid
 	4.让客户端发现服务端的共享存储：
-		iscsiadm --mode discoverydb --type sendtargets --portal 服务端IP –discover 服务端IP:3260,1 iqn.2016-02.com.example:server0
+		iscsiadm --mode discoverydb --type sendtargets --portal 服务端IP --discover 服务端IP:3260,1 iqn.2016-02.com.example:server0
 		 #此命令较长可以通过man iscsiadm查看帮助信息全文查找example	
 	5.重启iscsi服务加载iSCSI网络磁盘：
 		systemctl restart iscsi
